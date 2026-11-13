@@ -1,12 +1,12 @@
-import { readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
 import Fastify, { LogController } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import type { Catalog } from './catalog.ts';
 import { registerApi } from './api.ts';
-import { registerWeb } from './web.ts';
+import { createDiscovery } from './discover.ts';
+import { osrmEstimator } from './routing.ts';
+import { modelInterpreter } from './model.ts';
 
-export async function buildServer(catalog: Catalog, options: { adminToken?: string; logger?: boolean } = {}) {
+export async function buildServer(catalog: Catalog, options: { adminToken?: string; botToken?: string; logger?: boolean; routingOrigin?: string; clock?: () => Date } = {}) {
   const server = Fastify({
     logger: options.logger ?? false,
     logController: new LogController({ disableRequestLogging: true }),
@@ -21,13 +21,12 @@ export async function buildServer(catalog: Catalog, options: { adminToken?: stri
   let serverErrors = 0;
   let elapsedMilliseconds = 0;
   server.addHook('onSend', async (request, reply, body) => {
-    const isWidget = request.routeOptions.url === '/widget';
     reply.header('x-content-type-options', 'nosniff');
     reply.header('referrer-policy', 'no-referrer');
     reply.header('x-request-id', request.id);
     reply.header('content-security-policy', [
       "default-src 'none'", "style-src 'self'", "font-src 'self'", "img-src 'self' https:",
-      "form-action 'self'", "base-uri 'none'", isWidget ? 'frame-ancestors *' : "frame-ancestors 'none'",
+      "base-uri 'none'", "frame-ancestors 'none'",
     ].join('; '));
     return body;
   });
@@ -63,17 +62,13 @@ export async function buildServer(catalog: Catalog, options: { adminToken?: stri
     averageResponseMs: requestCount ? Number((elapsedMilliseconds / requestCount).toFixed(2)) : 0,
   }));
 
-  for (const asset of ['styles.css', 'tokens.css']) {
-    const file = readFileSync(new URL(`../public/${asset}`, import.meta.url));
-    const etag = '"' + createHash('sha256').update(file).digest('base64url') + '"';
-    server.get(`/assets/${asset}`, (request, reply) => {
-      reply.header('etag', etag).header('cache-control', 'public, max-age=3600');
-      if (request.headers['if-none-match'] === etag) return reply.code(304).send();
-      return reply.type('text/css; charset=utf-8').send(file);
-    });
-  }
-
-  registerApi(server, catalog, options.adminToken);
-  registerWeb(server, catalog);
+  registerApi(server, catalog, {
+    adminToken: options.adminToken, botToken: options.botToken,
+    discover: createDiscovery(catalog, {
+      clock: options.clock,
+      travel: options.routingOrigin ? osrmEstimator(options.routingOrigin) : undefined,
+      interpret: modelInterpreter(process.env),
+    }),
+  });
   return server;
 }

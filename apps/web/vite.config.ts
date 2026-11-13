@@ -7,6 +7,6 @@ const proxy = Object.fromEntries(['/api', '/openapi.json', '/health', '/metrics'
 
 export default defineConfig({
   root,
-  server: { port: 3000, strictPort: true, proxy },
-  preview: { port: 3000, strictPort: true, proxy },
+  server: { host: '127.0.0.1', port: 3000, strictPort: true, proxy },
+  preview: { host: '127.0.0.1', port: 3000, strictPort: true, proxy },
 });

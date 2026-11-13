@@ -27,7 +27,8 @@ export function datePeriod(period: string, now = new Date()): Pick<EventFilters,
   return {};
 }
 
-export type QueryValues = Record<string, string | undefined>;
+import type { QueryValues } from '@afisha/contracts';
+export type { QueryValues } from '@afisha/contracts';
 
 export class FilterError extends Error {}
 

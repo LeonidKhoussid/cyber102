@@ -44,21 +44,10 @@ test('HTTP routes share one catalog and keep admin changes private', async () =>
     assert.ok(event.headers.etag);
     assert.equal((await server.inject({ url: detailUrl, headers: { 'if-none-match': event.headers.etag } })).statusCode, 304);
 
-    const web = await server.inject('/');
-    assert.equal(web.statusCode, 200, web.body);
-    assert.match(web.body, /Контроль/);
-    assert.doesNotMatch(web.body, /<script>alert\(1\)<\/script>/);
-    const widget = await server.inject('/widget');
-    assert.equal(widget.statusCode, 200);
-    assert.match(widget.body, /Контроль/);
-    assert.match(String(widget.headers['content-security-policy']), /frame-ancestors \*/);
-    assert.equal(widget.headers['set-cookie'], undefined);
-
     const cancel = await server.inject({ method: 'PATCH', url: `/api/v1/admin/events/${eventId}`, headers, payload: { status: 'cancelled' } });
     assert.equal(cancel.statusCode, 200);
     assert.equal((await server.inject('/api/v1/events')).json().total, 0);
     assert.equal((await server.inject(detailUrl)).json().status, 'cancelled');
-    assert.match((await server.inject(`/events/${eventId}`)).body, /Отмен[её]но/i);
     assert.equal((await server.inject('/api/v1/events?maxPrice=-1')).statusCode, 400);
     assert.equal((await server.inject('/api/v1/events?city=Уфа&city=Салават')).statusCode, 400);
     assert.equal((await server.inject('/api/v1/events?age=6')).json().total, 0);

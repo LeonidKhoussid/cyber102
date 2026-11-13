@@ -1,6 +1,8 @@
 import { timingSafeEqual, createHash } from 'node:crypto';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { Catalog, EventStatus } from './catalog.ts';
+import type { Category } from '@afisha/contracts';
+import type { createDiscovery } from './discover.ts';
 import { categories } from './catalog.ts';
 import { FilterError, parseFilters } from './filters.ts';
 import type { QueryValues } from './filters.ts';
@@ -18,15 +20,15 @@ function cached(request: FastifyRequest, reply: FastifyReply, body: unknown) {
   return reply.send(body);
 }
 
-function adminAllowed(request: FastifyRequest, reply: FastifyReply, token: string | undefined) {
+function authorized(request: FastifyRequest, reply: FastifyReply, token: string | undefined) {
   if (!token) {
-    failure(reply, 503, 'admin_unavailable', 'Доступ администратора не настроен.');
+    failure(reply, 503, 'authorization_unavailable', 'Доступ к операции не настроен.');
     return false;
   }
   const expected = Buffer.from(`Bearer ${token}`);
   const provided = Buffer.from(request.headers.authorization ?? '');
   if (expected.length === provided.length && timingSafeEqual(expected, provided)) return true;
-  failure(reply, 401, 'unauthorized', 'Требуется токен администратора.');
+  failure(reply, 401, 'unauthorized', 'Требуется токен доступа.');
   return false;
 }
 
@@ -50,6 +52,27 @@ const spec = {
   openapi: '3.1.0',
   info: { title: 'Афиша Башкортостана', version: '0.1.0' },
   paths: {
+    '/api/v1/discover': { post: {
+      summary: 'Подбор событий по запросу на русском языке',
+      requestBody: { required: true, content: { 'application/json': { schema: {
+        type: 'object', required: ['message'], properties: {
+          message: { type: 'string', minLength: 1, maxLength: 1200 }, context: { type: 'object' },
+        },
+      } } } },
+      responses: {
+        '200': { description: 'Подходящие события, уточнение или объяснение отсутствия данных', content: { 'application/json': { schema: {
+          type: 'object', required: ['status', 'message', 'constraints', 'events', 'suggestions', 'context'], properties: {
+            status: { enum: ['matches', 'clarify', 'no_results'] }, message: { type: 'string' },
+            context: { type: 'object' }, constraints: { type: 'array', items: { type: 'object', properties: {
+              label: { type: 'string' }, value: { type: 'string' },
+            } } }, events: { type: 'array', items: { type: 'object', properties: {
+              event: { $ref: '#/components/schemas/Event' }, reasons: { type: 'array', items: { type: 'string' } },
+            } } }, suggestions: { type: 'array', items: { type: 'string' } },
+          },
+        } } } },
+        '400': { $ref: '#/components/responses/Invalid' },
+      },
+    } },
     '/api/v1/events': { get: {
       summary: 'Поиск по опубликованным событиям', parameters: queryParameters,
       responses: {
@@ -109,7 +132,42 @@ const spec = {
   },
 };
 
-export function registerApi(server: FastifyInstance, catalog: Catalog, token?: string) {
+export function registerApi(server: FastifyInstance, catalog: Catalog, options: {
+  adminToken?: string; botToken?: string; discover: ReturnType<typeof createDiscovery>;
+}) {
+  const token = options.adminToken;
+  server.post<{ Body: { message?: unknown; context?: unknown } }>('/api/v1/discover', {
+    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+  }, async (request, reply) => {
+    const message = request.body?.message;
+    if (typeof message !== 'string' || !message.trim() || message.length > 1200) {
+      return failure(reply, 400, 'invalid_message', 'Напишите запрос длиной до 1200 символов.');
+    }
+    return options.discover(message.trim(), request.body.context);
+  });
+
+  type SubscriberInput = { subscriber?: unknown; city?: unknown; category?: unknown };
+  server.put<{ Body: SubscriberInput }>('/api/v1/bot/subscriptions', (request, reply) => {
+    if (!authorized(request, reply, options.botToken)) return;
+    const { subscriber, city, category } = request.body ?? {};
+    if (typeof subscriber !== 'string' || !/^\d{1,20}$/.test(subscriber) ||
+        typeof city !== 'string' || !city.trim() || city.length > 100 ||
+        typeof category !== 'string' || !Object.hasOwn(categories, category)) {
+      return failure(reply, 400, 'invalid_subscription', 'Укажите пользователя, город и категорию.');
+    }
+    catalog.subscribe(subscriber, { city: city.trim(), category: category as Category });
+    return { saved: true };
+  });
+
+  server.delete<{ Body: SubscriberInput }>('/api/v1/bot/subscriptions', (request, reply) => {
+    if (!authorized(request, reply, options.botToken)) return;
+    const subscriber = request.body?.subscriber;
+    if (typeof subscriber !== 'string' || !/^\d{1,20}$/.test(subscriber)) {
+      return failure(reply, 400, 'invalid_subscription', 'Укажите пользователя.');
+    }
+    return { removed: catalog.unsubscribe(subscriber) };
+  });
+
   server.addContentTypeParser('text/csv', { parseAs: 'string' }, (_request, body, done) => done(null, body));
   server.get('/health', () => {
     catalog.search({ limit: 1 });
@@ -130,7 +188,7 @@ export function registerApi(server: FastifyInstance, catalog: Catalog, token?: s
   });
   server.get('/api/v1/directories', (request, reply) => cached(request, reply, catalog.directories()));
   server.post('/api/v1/admin/import', (request, reply) => {
-    if (!adminAllowed(request, reply, token)) return;
+    if (!authorized(request, reply, token)) return;
     let events: ReturnType<typeof parseImport>;
     try {
       events = parseImport(request.body);
@@ -140,12 +198,12 @@ export function registerApi(server: FastifyInstance, catalog: Catalog, token?: s
     return catalog.importEvents(events, 'admin');
   });
   server.post('/api/v1/admin/events', (request, reply) => {
-    if (!adminAllowed(request, reply, token)) return;
+    if (!authorized(request, reply, token)) return;
     const report = catalog.importEvents(parseImport(request.body, 'manual'), 'admin');
     return report.rejected.length ? failure(reply, 400, 'invalid_event', report.rejected[0].reason) : report;
   });
   server.patch<{ Params: { id: string }; Body: { status?: EventStatus } }>('/api/v1/admin/events/:id', (request, reply) => {
-    if (!adminAllowed(request, reply, token)) return;
+    if (!authorized(request, reply, token)) return;
     const status = request.body?.status;
     if (!status || !['published', 'draft', 'cancelled'].includes(status)) {
       return failure(reply, 400, 'invalid_status', 'Допустимые статусы: published, draft, cancelled.');

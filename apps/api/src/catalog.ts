@@ -3,38 +3,11 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 
-export const categories = {
-  concert: 'Концерты',
-  theatre: 'Спектакли',
-  exhibition: 'Выставки',
-  festival: 'Фестивали',
-  cinema: 'Кино',
-  tour: 'Экскурсии',
-  other: 'Другие события',
-} as const;
+import { categories } from '@afisha/contracts';
+import type { CatalogEvent, Category, EventDetails, EventPage, EventStatus, Subscription } from '@afisha/contracts';
 
-export type Category = keyof typeof categories;
-export type EventStatus = 'published' | 'draft' | 'cancelled';
-
-type EventDetails = {
-  title: string;
-  category: Category;
-  startsAt: string;
-  endsAt?: string;
-  city: string;
-  venue: string;
-  address?: string;
-  description?: string;
-  priceMin?: number;
-  priceMax?: number;
-  ageLimit?: number;
-  language?: string;
-  latitude?: number;
-  longitude?: number;
-  imageUrl?: string;
-  ticketUrl?: string;
-  status: EventStatus;
-};
+export { categories } from '@afisha/contracts';
+export type { CatalogEvent, Category, EventPage, EventStatus, Subscription } from '@afisha/contracts';
 
 export type SourceEvent = EventDetails & {
   sourceUrl: string;
@@ -44,11 +17,6 @@ export type SourceEvent = EventDetails & {
   verifiedAt?: string;
   confidence?: number;
   raw: unknown;
-};
-
-export type CatalogEvent = EventDetails & {
-  id: string;
-  sources: { name: string; url: string; verifiedAt?: string }[];
 };
 
 export type EventFilters = {
@@ -65,14 +33,6 @@ export type EventFilters = {
   limit?: number;
 };
 
-export type EventPage = {
-  events: CatalogEvent[];
-  page: number;
-  limit: number;
-  total: number;
-};
-
-export type Subscription = { city: string; category: Category };
 export type ImportReport = {
   added: number;
   updated: number;

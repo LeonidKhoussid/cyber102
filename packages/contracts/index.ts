@@ -29,7 +29,7 @@ export type QueryValues = Record<string, string | undefined>;
 export type DiscoveryContext = {
   city?: string; category?: Category; date?: string; period?: 'today' | 'tomorrow' | 'weekend' | 'week';
   latestEnd?: string; earliestStart?: string; childAge?: number; child?: boolean; partySize?: number;
-  budget?: number; travelMinutes?: number; origin?: string; free?: boolean; cheaperThan?: number; query?: string;
+  budget?: number; travelMinutes?: number; origin?: string; free?: boolean; cheaperThan?: number; referencePrice?: number; seenEventIds?: string[]; query?: string;
 };
 
 export type DiscoveryResponse = {

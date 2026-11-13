@@ -1,17 +1,40 @@
 services:
-  app:
-    build: .
+  api:
+    build:
+      context: .
+      target: api
     ports:
-      - "127.0.0.1:${PORT:-3000}:3000"
+      - "127.0.0.1:${API_PORT:-3001}:3001"
     environment:
-      PORT: 3000
+      API_PORT: 3001
       HOST: 0.0.0.0
       BOOTSTRAP_CATALOG: ${BOOTSTRAP_CATALOG:-1}
       CATALOG_PATH: /app/data/catalog.sqlite
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
-      BOT_TOKEN: ${BOT_TOKEN:-}
-      PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
+      BOT_API_TOKEN: ${BOT_API_TOKEN:-}
+      ROUTING_ORIGIN: ${ROUTING_ORIGIN:-}
+      DISCOVERY_MODEL: ${DISCOVERY_MODEL:-}
+      DISCOVERY_MODEL_KEY: ${DISCOVERY_MODEL_KEY:-}
+      DISCOVERY_MODEL_BASE: ${DISCOVERY_MODEL_BASE:-https://api.openai.com/v1}
     volumes:
       - catalog:/app/data
+  web:
+    build:
+      context: .
+      target: web
+    ports:
+      - "127.0.0.1:${WEB_PORT:-3000}:80"
+    depends_on: [api]
+  bot:
+    profiles: [telegram]
+    build:
+      context: .
+      target: bot
+    environment:
+      API_ORIGIN: http://api:3001
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      BOT_API_TOKEN: ${BOT_API_TOKEN:-}
+      PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
+    depends_on: [api]
 volumes:
   catalog:
