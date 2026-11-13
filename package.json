@@ -1,0 +1,27 @@
+{
+  "name": "afisha-bashkortostan",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.15"
+  },
+  "scripts": {
+    "dev": "node --env-file-if-exists=.env --watch src/main.ts",
+    "start": "node --env-file-if-exists=.env src/main.ts",
+    "refresh": "node --env-file-if-exists=.env src/refresh.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@fastify/rate-limit": "11.2.2",
+    "cheerio": "1.2.0",
+    "csv-parse": "7.0.3",
+    "fastify": "5.12.8",
+    "grammy": "1.46.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "7.0.2"
+  }
+}
