@@ -222,7 +222,9 @@ type CanonicalRow = { id: string; identity: string; status_override: EventStatus
 const selectEvents = `SELECT events.id, events.details, events.status,
   COALESCE((SELECT json_group_array(json(source_item)) FROM
     (SELECT json_object('name', name, 'url', url, 'verifiedAt', verified_at) AS source_item
-     FROM sources WHERE event_id = events.id GROUP BY url ORDER BY MAX(verified_at) DESC, url)), '[]') AS sources
+     FROM sources WHERE event_id = events.id AND (json_extract(normalized, '$.status') != 'draft' OR NOT EXISTS
+       (SELECT 1 FROM sources AS visible WHERE visible.event_id = events.id AND json_extract(visible.normalized, '$.status') != 'draft'))
+     GROUP BY url ORDER BY MAX(verified_at) DESC, url)), '[]') AS sources
   FROM events`;
 
 function readEvent(row: EventRow): CatalogEvent {
@@ -267,18 +269,20 @@ export function openCatalog(filename = 'data/catalog.sqlite', clock = () => new 
       ORDER BY CASE type WHEN 'manual' THEN 0 WHEN 'api' THEN 1 WHEN 'import' THEN 2 ELSE 3 END,
         verified_at DESC, source_key`).all(id);
     const sourceDetails = records.map(record => JSON.parse(String(record.normalized)) as EventDetails);
-    const primary = sourceDetails.find(event => event.status === 'published') ?? sourceDetails[0];
+    const visibleDetails = sourceDetails.filter(event => event.status !== 'draft');
+    const candidates = visibleDetails.length ? visibleDetails : sourceDetails;
+    const primary = candidates.find(event => event.status === 'published') ?? candidates[0];
     if (!primary) throw new Error('Cannot rebuild an event without a source.');
-    const status = override ?? (sourceDetails.some(event => event.status === 'cancelled') ? 'cancelled' : primary.status);
+    const status = override ?? (visibleDetails.some(event => event.status === 'cancelled') ? 'cancelled' : primary.status);
     // Keep related fields together so that ranges and coordinate pairs always agree with a source.
-    const price = sourceDetails.find(event => event.priceMin !== undefined || event.priceMax !== undefined);
-    const coordinates = sourceDetails.find(event => event.latitude !== undefined && event.longitude !== undefined);
+    const price = candidates.find(event => event.priceMin !== undefined || event.priceMax !== undefined);
+    const coordinates = candidates.find(event => event.latitude !== undefined && event.longitude !== undefined);
     const merged = {
       ...primary, priceMin: price?.priceMin, priceMax: price?.priceMax,
       latitude: coordinates?.latitude, longitude: coordinates?.longitude,
     };
     for (const field of ['endsAt', 'address', 'description', 'ageLimit', 'language', 'imageUrl', 'ticketUrl'] as const) {
-      const source = sourceDetails.find(event => event[field] !== undefined);
+      const source = candidates.find(event => event[field] !== undefined);
       if (source) Object.assign(merged, { [field]: source[field] });
     }
     writeCanonical(id, identity, merged, status);

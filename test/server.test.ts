@@ -31,8 +31,16 @@ test('HTTP routes share one catalog and keep admin changes private', async () =>
     assert.equal(search.json().total, 1);
     const eventId = search.json().events[0].id as string;
     const detailUrl = `/api/v1/events/${eventId}`;
+
+    const draft = { ...record, sourceKey: 'private-control', status: 'draft', priceMin: 0,
+      description: 'Черновик для проверки', sourceUrl: 'https://example.org/private-control' };
+    const draftImport = await server.inject({ method: 'POST', url: '/api/v1/admin/events', headers, payload: draft });
+    assert.equal(draftImport.statusCode, 200, draftImport.body);
+    assert.equal((await server.inject('/api/v1/events?maxPrice=0')).json().total, 0);
     const event = await server.inject(detailUrl);
+    assert.equal(event.json().sources.length, 1);
     assert.equal(event.json().sources[0].url, record.sourceUrl);
+    assert.equal(event.json().description, undefined);
     assert.ok(event.headers.etag);
     assert.equal((await server.inject({ url: detailUrl, headers: { 'if-none-match': event.headers.etag } })).statusCode, 304);
 

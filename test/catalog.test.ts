@@ -69,3 +69,29 @@ test('keeps subscriptions durable and unsubscribe idempotent', () => {
     catalog.close();
   }
 });
+
+
+test('keeps matching draft source data private until moderation publishes it', () => {
+  const catalog = openCatalog(':memory:', () => now);
+  try {
+    catalog.importEvents([record]);
+    const draft = {
+      ...record, sourceType: 'manual', sourceKey: 'draft', status: 'draft',
+      description: 'Контрольный текст черновика', priceMin: 0, priceMax: 0,
+      sourceUrl: 'https://example.org/draft',
+    } satisfies SourceEvent;
+    catalog.importEvents([draft]);
+    const [published] = catalog.search().events;
+    assert.equal(published.priceMin, 600);
+    assert.equal(published.description, undefined);
+    assert.equal(published.sources.length, 1);
+    assert.equal(catalog.search({ maxPrice: 0 }).total, 0);
+    catalog.importEvents([{ ...draft, status: 'published' }]);
+    const [moderated] = catalog.search().events;
+    assert.equal(moderated.priceMin, 0);
+    assert.equal(moderated.description, draft.description);
+    assert.equal(moderated.sources.length, 2);
+  } finally {
+    catalog.close();
+  }
+});
