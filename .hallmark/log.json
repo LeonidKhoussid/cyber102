@@ -1,6 +1,17 @@
 [
   {
     "date": "2026-11-13",
+    "macrostructure": "Workbench",
+    "theme": "custom",
+    "theme_axes": "dark / grotesk-sans / cool",
+    "vibe": "ink blue question workspace",
+    "nav": "N9",
+    "footer": "Ft1",
+    "enrichment": "none",
+    "brief": "Афиша Башкортостана · диалоговый поиск событий"
+  },
+  {
+    "date": "2026-11-13",
     "macrostructure": "Catalogue",
     "theme": "Newsprint",
     "nav": "N6",
