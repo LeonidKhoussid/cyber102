@@ -1,8 +1,12 @@
 import { load } from 'cheerio';
-import { setTimeout as delay } from 'node:timers/promises';
+import { mapConcurrent, openCrawler, sourceReader } from './crawl.ts';
+import type { Read } from './crawl.ts';
 import type { SourceEvent } from './catalog.ts';
 
-export type SourceResult = { name: string; events: SourceEvent[]; rejected: number; error?: string };
+import {
+  category, clean, eventNotice, inUfa, numberBetween, plainHtml, publicPage, record, safeUrl, structuredData,
+} from './source-data.ts';
+import type { RecordValue, SourceResult } from './source-data.ts';
 
 const culture = 'https://kulturaufa.ru';
 const afisha = 'https://afisha-ufa.ru';
@@ -11,110 +15,15 @@ const cultureName = 'Управление культуры Уфы';
 const afishaName = 'Афиша Уфа';
 const articlePath = /^\/(?:novosti|afishi|muzei|po-pushkinskoj-karte)\/[a-z0-9-]+\/$/;
 const eventPath = /^\/events\/[a-z0-9-]+\/([0-9]+)-[a-z0-9-]+\/$/;
-const userAgent = 'UfaCultureCatalog';
 const detailLimit = 12;
-const ufaOffset = '+05:00';
-
-type RecordValue = Record<string, unknown>;
-type Read = (url: string) => Promise<Response>;
-
-function record(value: unknown): RecordValue {
-  return typeof value === 'object' && value !== null && !Array.isArray(value) ? value as RecordValue : {};
-}
-
-function clean(value: unknown): string | undefined {
-  return typeof value === 'string' ? value.replace(/\s+/g, ' ').trim() || undefined : undefined;
-}
-
-function plainHtml(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  const html = load(value);
-  html('script, style').remove();
-  html('br, p, li, h2, h3').append(' ');
-  return clean(html.root().text()) ?? '';
-}
-
-function safeUrl(value: unknown, origin?: string): URL | undefined {
-  if (typeof value !== 'string') return;
-  try {
-    const url = new URL(value, origin);
-    if (url.protocol === 'https:' && !url.username && !url.password && (!origin || url.origin === origin)) return url;
-  } catch {
-    return;
-  }
-}
-
-function publicPage(value: unknown, origin: string, path: RegExp): URL | undefined {
-  const url = safeUrl(value, origin);
-  if (url && !url.search && !url.hash && path.test(url.pathname)) return url;
-}
-
-function inUfa(value: unknown): string | undefined {
-  if (typeof value !== 'string') return;
-  const date = value.match(/^(\d{4}-\d{2}-\d{2})T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,3})?)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/);
-  if (!date || !Number.isFinite(Date.parse(value))) return;
-  if (new Date(date[1] + 'T00:00:00Z').toISOString().slice(0, 10) !== date[1]) return;
-  return new Date(Date.parse(value) + 5 * 60 * 60 * 1000).toISOString().replace(/(?:\.000)?Z$/, ufaOffset);
-}
-
-function numberBetween(value: unknown, lower: number, upper: number): number | undefined {
-  if (typeof value !== 'number' && (typeof value !== 'string' || !/^-?\d+(?:\.\d+)?$/.test(value))) return;
-  const result = Number(value);
-  return result >= lower && result <= upper && Number.isFinite(result) ? result : undefined;
-}
-
-function category(value: string): SourceEvent['category'] {
-  if (/фестивал|Festival/i.test(value)) return 'festival';
-  if (/кино|ScreeningEvent/i.test(value)) return 'cinema';
-  if (/экскурси|Tour/i.test(value)) return 'tour';
-  if (/театр|спектакл|TheaterEvent/i.test(value)) return 'theatre';
-  if (/выставк|музеи|ExhibitionEvent/i.test(value)) return 'exhibition';
-  if (/концерт|MusicEvent/i.test(value)) return 'concert';
-  return 'other';
-}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function reader(fetcher: typeof fetch): Read {
-  return async (url) => {
-    const response = await fetcher(url, {
-      redirect: 'error',
-      signal: AbortSignal.timeout(10_000),
-      headers: { 'User-Agent': userAgent },
-    });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new Error('HTTP ' + response.status + ' for ' + url);
-    }
-    return response;
-  };
-}
-
 const months = 'января февраля марта апреля мая июня июля августа сентября октября ноября декабря'.split(' ');
 const municipalDate = new RegExp(String.raw`(?<!\d)(\d{1,2}) (${months.join('|')})(?: (\d{4})(?: года)?)?`, 'gi');
 const announcement = new RegExp(municipalDate.source + String.raw`,? в ((?:[01]\d|2[0-3]):[0-5]\d) в ([^.!?;:]+?) (?:состоится|пройд[её]т|отмен[её]н[ао]?)(?= |$|[.!?])`, 'i');
-
-const cancelledNotice = /^(?:официально )?(?:отмен[её]н[ао]?|отменяется|не состоится)(?=$|[\s.!?,:;—–])/i;
-const postponedNotice = /^(?:официально )?(?:перен[её]с[её]н[ао]?|переносится|отложен[ао]?)(?=$|[\s.!?,:;—–])/i;
-
-function eventNotice(title: string, ...texts: string[]): SourceEvent['status'] {
-  const genericSubjects = ['данное мероприятие', 'мероприятие', 'концерт', 'спектакль', 'фестиваль', 'показ', 'событие', 'выставка'];
-  const names = [title, ...(title.match(/«[^»]+»/g) ?? [])].flatMap((name) => [name, 'концерт ' + name, 'спектакль ' + name]);
-  const subjects = [...names, ...genericSubjects].map((subject) => subject.toLowerCase());
-  let status: SourceEvent['status'] = 'published';
-  for (const text of texts) {
-    for (const sentence of text.split(/(?:[.!?]+\s+|\n+)/)) {
-      const statement = sentence.trim().replace(/^(?:(?:внимание|важно|к сожалению)\s*[:!,–—]\s*)+/i, '').toLowerCase();
-      const subject = subjects.find((candidate) => statement.startsWith(candidate + ' '));
-      const predicate = subject ? statement.slice(subject.length).trim() : statement;
-      if (cancelledNotice.test(predicate)) return 'cancelled';
-      if (postponedNotice.test(predicate)) status = 'draft';
-    }
-  }
-  return status;
-}
 
 function municipalEvent(value: unknown, now: Date): SourceEvent | undefined {
   const post = record(value);
@@ -135,7 +44,7 @@ function municipalArticle(post: RecordValue, title: string, content: string, now
   const year = explicitYear ?? (publication && Number(publication[2]) === month &&
     Number(day) >= Number(publication[3]) ? publication[1] : undefined);
   if (!year) return;
-  const startsAt = inUfa(year + '-' + String(month).padStart(2, '0') + '-' + day.padStart(2, '0') + 'T' + time + ':00' + ufaOffset);
+  const startsAt = inUfa(year + '-' + String(month).padStart(2, '0') + '-' + day.padStart(2, '0') + 'T' + time + ':00+05:00');
   const venue = clean(venueWithAddress.split('(')[0]);
   if (!startsAt || !venue || /\b(?:https?|www)\b|\b\d{2}:\d{2}\b/.test(venue)) return;
 
@@ -152,7 +61,7 @@ function municipalArticle(post: RecordValue, title: string, content: string, now
 }
 
 async function municipal(read: Read, now: Date, result: SourceResult) {
-  const posts: unknown = await (await read(cultureFeed)).json();
+  const posts: unknown = JSON.parse(await read(cultureFeed));
   if (!Array.isArray(posts)) throw new Error('Expected a WordPress posts array');
   const seen = new Set<string>();
   for (const post of posts.slice(0, 20)) {
@@ -164,7 +73,7 @@ async function municipal(read: Read, now: Date, result: SourceResult) {
     if (seen.has(event.sourceUrl)) continue;
     seen.add(event.sourceUrl);
     try {
-      const html = load(await (await read(event.sourceUrl)).text());
+      const html = load(await read(event.sourceUrl));
       const article = html('.my-single .my-page-content');
       const title = clean(article.children('h1').text());
       const body = article.children('.mt-2').html();
@@ -190,73 +99,13 @@ async function municipal(read: Read, now: Date, result: SourceResult) {
   }
 }
 
-function robotsPolicy(body: string) {
-  const groups: { agents: string[]; rules: { expression: RegExp; weight: number; allow: boolean }[]; delay: number }[] = [];
-  let group = { agents: [] as string[], rules: [] as (typeof groups)[number]['rules'], delay: 0 };
-  let readingRules = false;
-  for (const line of body.split(/\r?\n/)) {
-    const field = line.split('#', 1)[0].match(/^\s*([a-z-]+)\s*:\s*(.*?)\s*$/i);
-    if (!field) continue;
-    const [, key, value] = field;
-    if (key.toLowerCase() === 'user-agent') {
-      if (readingRules || groups.length === 0) {
-        group = { agents: [], rules: [], delay: 0 };
-        groups.push(group);
-        readingRules = false;
-      }
-      group.agents.push(value.toLowerCase());
-    } else if (group.agents.length > 0) {
-      readingRules = true;
-      if (key.toLowerCase() === 'crawl-delay') group.delay = Number(value) || 0;
-      if (value && /^(?:allow|disallow)$/i.test(key)) {
-        const anchored = value.endsWith('$');
-        const pattern = (anchored ? value.slice(0, -1) : value).split('*')
-          .map((literal) => literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('.*');
-        group.rules.push({ expression: new RegExp('^' + pattern + (anchored ? '$' : '')), weight: value.length, allow: /^allow$/i.test(key) });
-      }
-    }
-  }
-  const matching = groups.filter((entry) => entry.agents.includes(userAgent.toLowerCase()));
-  const applicable = matching.length > 0 ? matching : groups.filter((entry) => entry.agents.includes('*'));
-  const rules = applicable.flatMap((entry) => entry.rules).sort((left, right) =>
-    right.weight - left.weight || Number(right.allow) - Number(left.allow));
-  return {
-    delayMs: Math.max(0, ...applicable.map((entry) => entry.delay * 1000)),
-    allowed: (url: URL) => rules.find((rule) => rule.expression.test(url.pathname + url.search))?.allow ?? true,
-  };
-}
-
-function jsonEvents(html: ReturnType<typeof load>): RecordValue[] {
-  const events: RecordValue[] = [];
-  function visit(value: unknown) {
-    if (Array.isArray(value)) {
-      value.forEach(visit);
-      return;
-    }
-    if (typeof value !== 'object' || value === null) return;
-    const node = record(value);
-    const types = Array.isArray(node['@type']) ? node['@type'] : [node['@type']];
-    if (types.some((type) => typeof type === 'string' && /^(?:https?:\/\/schema\.org\/)?[A-Za-z]*Event$/.test(type))) {
-      events.push(node);
-      return;
-    }
-    visit(node['@graph']);
-    visit(node.itemListElement);
-    visit(node.item);
-  }
-  html('script[type="application/ld+json"]').each((_index, element) => {
-    try { visit(JSON.parse(html(element).html() ?? '')); } catch { /* Ignore unrelated malformed JSON-LD scripts. */ }
-  });
-  return events;
-}
-
 function strongestStatus(...statuses: SourceEvent['status'][]): SourceEvent['status'] {
   if (statuses.includes('cancelled')) return 'cancelled';
   return statuses.includes('draft') ? 'draft' : 'published';
 }
 
 function afishaEvent(html: ReturnType<typeof load>, url: URL, now: Date): SourceEvent | undefined {
-  const entries = jsonEvents(html)
+  const entries = structuredData(html)
     .filter((event) => publicPage(event.url, afisha, eventPath)?.href === url.href)
     .map((raw) => ({
       raw,
@@ -310,59 +159,70 @@ function afishaEvent(html: ReturnType<typeof load>, url: URL, now: Date): Source
 }
 
 async function scrape(read: Read, now: Date, result: SourceResult) {
-  const robots = robotsPolicy(await (await read(afisha + '/robots.txt')).text());
+  const crawler = await openCrawler(afisha, read);
   const home = new URL(afisha + '/');
   const schedule = new URL(afisha + '/list/all/');
-  if (!robots.allowed(home) && !robots.allowed(schedule)) throw new Error('robots.txt disallows the listing paths');
-
-  let nextRequest = Date.now() + robots.delayMs;
-  const page = async (url: URL) => {
-    const start = Math.max(Date.now(), nextRequest);
-    nextRequest = start + robots.delayMs;
-    if (robots.delayMs > 0) await delay(start - Date.now());
-    return load(await (await read(url.href)).text());
-  };
+  if (!crawler.allowed(home) && !crawler.allowed(schedule)) throw new Error('robots.txt disallows the listing paths');
   const candidates = new Set<string>();
   const invalid = new Set<unknown>();
   function add(value: unknown) {
     const url = publicPage(value, afisha, eventPath);
-    if (!url || !robots.allowed(url)) invalid.add(value);
+    if (!url || !crawler.allowed(url)) invalid.add(value);
     else candidates.add(url.href);
   }
+
   const listingErrors: string[] = [];
-  for (const listing of [home, schedule]) {
-    if (!robots.allowed(listing)) continue;
+  async function discover(listing: URL) {
+    if (!crawler.allowed(listing)) return;
     try {
-      const html = await page(listing);
-      jsonEvents(html).forEach((event) => add(event.url));
-      html('.uf-event-card .uf-event-title a[href]').each((_index, link) => { add(html(link).attr('href')); });
+      const html = load(await crawler.page(listing));
+      const local = new Date(now.getTime() + 5 * 3_600_000);
+      for (const item of structuredData(html)) {
+        const startsAt = inUfa(item.startDate);
+        if (startsAt && Date.parse(startsAt) <= now.getTime() &&
+            clean(item.eventStatus)?.endsWith('/EventScheduled')) continue;
+        add(item.url);
+      }
+      html('.uf-event-card .uf-event-title a[href]').each((_index, link) => {
+        const date = html(link).closest('.uf-event-card').find('.uf-event-date').first().text().trim();
+        const shown = /^(\d{1,2}) ([а-я]+), [а-я]+, (\d{2}):(\d{2})/iu.exec(date);
+        if (shown && Number(shown[1]) === local.getUTCDate() && months.indexOf(shown[2]) === local.getUTCMonth() &&
+            Number(shown[3]) * 60 + Number(shown[4]) <= local.getUTCHours() * 60 + local.getUTCMinutes()) return;
+        add(html(link).attr('href'));
+      });
     } catch (error) {
       listingErrors.push(errorMessage(error));
     }
   }
+  await discover(home);
+  if (candidates.size < detailLimit) await discover(schedule);
   result.rejected += invalid.size;
-  if (listingErrors.length > 0) result.error = listingErrors.join(' | ');
+  if (listingErrors.length) result.error = listingErrors.join(' | ');
   const urls = [...candidates].slice(0, detailLimit);
-  for (let index = 0; index < urls.length; index += 3) {
-    const checked = await Promise.allSettled(urls.slice(index, index + 3).map(async (href) => {
-      const url = new URL(href);
-      return afishaEvent(await page(url), url, now);
-    }));
-    for (const outcome of checked) {
-      if (outcome.status === 'fulfilled' && outcome.value) result.events.push(outcome.value);
-      else result.rejected++;
-    }
+  const checked = await mapConcurrent(urls, 3, async href => {
+    const url = new URL(href);
+    return afishaEvent(load(await crawler.page(url)), url, now);
+  });
+  for (const outcome of checked) {
+    if (outcome.status === 'fulfilled' && outcome.value) result.events.push(outcome.value);
+    else result.rejected++;
   }
+  if (urls.length && checked.every(outcome => outcome.status === 'rejected')) {
+    result.error ??= 'All event detail requests failed';
+  }
+
 }
 
-export async function collectSources({ fetcher = fetch, now = new Date() }: {
-  fetcher?: typeof fetch; now?: Date;
+export async function collectSources({ fetcher = fetch, now = new Date(), onSource }: {
+  fetcher?: typeof fetch; now?: Date; onSource?: (result: SourceResult, durationMs: number) => void;
 } = {}): Promise<SourceResult[]> {
-  const read = reader(fetcher);
+  const read = sourceReader(fetcher);
   const sources = [[cultureName, municipal], [afishaName, scrape]] as const;
   return Promise.all(sources.map(async ([name, collect]) => {
+    const started = performance.now();
     const result: SourceResult = { name, events: [], rejected: 0 };
     try { await collect(read, now, result); } catch (error) { result.error = errorMessage(error); }
+    onSource?.(result, Math.round(performance.now() - started));
     return result;
   }));
 }

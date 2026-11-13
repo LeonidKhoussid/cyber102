@@ -1,5 +1,6 @@
 import { load } from 'cheerio';
 import type { SourceEvent } from './catalog.ts';
+import { mapConcurrent, openCrawler, sourceReader } from './crawl.ts';
 
 const origin = 'https://rusdramteatr.ru';
 const name = 'Русский драматический театр Стерлитамака';
@@ -72,17 +73,9 @@ export async function collectSterlitamak(fetcher: typeof fetch, now: Date): Prom
 }> {
   const result: { name: string; events: SourceEvent[]; rejected: number; error?: string } =
     { name, events: [], rejected: 0 };
-  const read = async (path: string) => {
-    const response = await fetcher(origin + path, {
-      redirect: 'error', signal: AbortSignal.timeout(10_000), headers: { 'User-Agent': 'UfaCultureCatalog' },
-    });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new Error('HTTP ' + response.status + ' for ' + origin + path);
-    }
-    return load(await response.text());
-  };
   try {
+    const crawler = await openCrawler(origin, sourceReader(fetcher));
+    const read = async (path: string) => load(await crawler.page(new URL(path, origin)));
     const listing = await read('/afisha');
     const cards = listing('.nspArt:has(.nspInfo)');
     if (!cards.length) throw new Error('Expected theater schedule cards');
@@ -100,14 +93,14 @@ export async function collectSterlitamak(fetcher: typeof fetch, now: Date): Prom
       candidates.set(path, { time, status });
     }
     const entries = [...candidates].slice(0, detailLimit);
-    for (let index = 0; index < entries.length; index += 3) {
-      const batch = await Promise.allSettled(entries.slice(index, index + 3).map(async ([path, item]) =>
-        theatreEvent(await read(path), path, item.time, item.status, now)));
-      for (const entry of batch) {
-        if (entry.status === 'fulfilled' && entry.value) result.events.push(entry.value);
-        else result.rejected++;
-      }
+    const checked = await mapConcurrent(entries, 3, async ([path, item]) =>
+      theatreEvent(await read(path), path, item.time, item.status, now));
+    for (const entry of checked) {
+      if (entry.status === 'fulfilled' && entry.value) result.events.push(entry.value);
+      else result.rejected++;
     }
+    if (entries.length && checked.every(entry => entry.status === 'rejected')) result.error = 'All theater detail requests failed';
+
   } catch (error) {
     result.error = error instanceof Error ? error.message : String(error);
   }
