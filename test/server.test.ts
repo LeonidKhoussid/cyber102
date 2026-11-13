@@ -61,3 +61,21 @@ test('HTTP routes share one catalog and keep admin changes private', async () =>
     catalog.close();
   }
 });
+
+
+test('returns 429 instead of 500 when the HTTP request limit is exceeded', async () => {
+  const catalog = openCatalog(':memory:');
+  const server = await buildServer(catalog);
+  try {
+    for (let requestNumber = 1; requestNumber <= 180; requestNumber++) {
+      assert.equal((await server.inject('/health')).statusCode, 200);
+    }
+    const rejected = await server.inject('/health');
+    assert.equal(rejected.statusCode, 429);
+    assert.equal(rejected.json().code, 'rate_limit');
+    assert.ok(rejected.headers['retry-after']);
+  } finally {
+    await server.close();
+    catalog.close();
+  }
+});

@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import Fastify from 'fastify';
+import Fastify, { LogController } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
 import type { Catalog } from './catalog.ts';
 import { registerApi } from './api.ts';
@@ -9,13 +9,12 @@ import { registerWeb } from './web.ts';
 export async function buildServer(catalog: Catalog, options: { adminToken?: string; logger?: boolean } = {}) {
   const server = Fastify({
     logger: options.logger ?? false,
-    disableRequestLogging: true,
+    logController: new LogController({ disableRequestLogging: true }),
     bodyLimit: 1_048_576,
   });
   await server.register(rateLimit, {
     max: 180,
     timeWindow: '1 minute',
-    errorResponseBuilder: () => ({ code: 'rate_limit', message: 'Слишком много запросов. Попробуйте через минуту.', details: null }),
   });
 
   let requestCount = 0;
