@@ -96,11 +96,33 @@ const months = 'января февраля марта апреля мая ию�
 const municipalDate = new RegExp(String.raw`(?<!\d)(\d{1,2}) (${months.join('|')})(?: (\d{4})(?: года)?)?`, 'gi');
 const announcement = new RegExp(municipalDate.source + String.raw`,? в ((?:[01]\d|2[0-3]):[0-5]\d) в ([^.!?;:]+?) (?:состоится|пройд[её]т|отмен[её]н[ао]?)(?= |$|[.!?])`, 'i');
 
+const cancelledNotice = /^(?:официально )?(?:отмен[её]н[ао]?|отменяется|не состоится)(?=$|[\s.!?,:;—–])/i;
+const postponedNotice = /^(?:официально )?(?:перен[её]с[её]н[ао]?|переносится|отложен[ао]?)(?=$|[\s.!?,:;—–])/i;
+
+function eventNotice(title: string, ...texts: string[]): SourceEvent['status'] {
+  const genericSubjects = ['данное мероприятие', 'мероприятие', 'концерт', 'спектакль', 'фестиваль', 'показ', 'событие', 'выставка'];
+  const names = [title, ...(title.match(/«[^»]+»/g) ?? [])].flatMap((name) => [name, 'концерт ' + name, 'спектакль ' + name]);
+  const subjects = [...names, ...genericSubjects].map((subject) => subject.toLowerCase());
+  let status: SourceEvent['status'] = 'published';
+  for (const text of texts) {
+    for (const sentence of text.split(/(?:[.!?]+\s+|\n+)/)) {
+      const statement = sentence.trim().replace(/^(?:(?:внимание|важно|к сожалению)\s*[:!,–—]\s*)+/i, '').toLowerCase();
+      const subject = subjects.find((candidate) => statement.startsWith(candidate + ' '));
+      const predicate = subject ? statement.slice(subject.length).trim() : statement;
+      if (cancelledNotice.test(predicate)) return 'cancelled';
+      if (postponedNotice.test(predicate)) status = 'draft';
+    }
+  }
+  return status;
+}
+
 function municipalEvent(value: unknown, now: Date): SourceEvent | undefined {
   const post = record(value);
+  return municipalArticle(post, plainHtml(record(post.title).rendered), plainHtml(record(post.content).rendered), now);
+}
+
+function municipalArticle(post: RecordValue, title: string, content: string, now: Date): SourceEvent | undefined {
   const sourceUrl = publicPage(post.link, culture, articlePath);
-  const title = plainHtml(record(post.title).rendered);
-  const content = plainHtml(record(post.content).rendered);
   const headline = content.match(announcement);
   if (!sourceUrl || !Number.isSafeInteger(post.id) || !title || !headline ||
       [...content.matchAll(municipalDate)].length !== 1 || (content.match(/\d{1,2}:\d{2}/g)?.length ?? 0) !== 1 ||
@@ -117,8 +139,8 @@ function municipalEvent(value: unknown, now: Date): SourceEvent | undefined {
   const venue = clean(venueWithAddress.split('(')[0]);
   if (!startsAt || !venue || /\b(?:https?|www)\b|\b\d{2}:\d{2}\b/.test(venue)) return;
 
-  const status = /(?:мероприятие|концерт|спектакль|фестиваль|показ) отмен[её]н[ао]?(?=[.!? ]|$)|отмен[её]н[ао]?$/i.test(title + '. ' + headline[0])
-    ? 'cancelled' : 'published';
+  const status = strongestStatus(eventNotice(title, title, content),
+    /отмен[её]н[ао]?$/i.test(headline[0]) ? 'cancelled' : 'published');
   if (status === 'published' && Date.parse(startsAt) <= now.getTime()) return;
   const free = /вход (?:для всех желающих )?(?:свободный|бесплатный)(?=[.!? ]|$)/i.test(content);
   return {
@@ -142,8 +164,26 @@ async function municipal(read: Read, now: Date, result: SourceResult) {
     if (seen.has(event.sourceUrl)) continue;
     seen.add(event.sourceUrl);
     try {
-      await (await read(event.sourceUrl)).body?.cancel();
-      result.events.push({ ...event, verifiedAt: now.toISOString() });
+      const html = load(await (await read(event.sourceUrl)).text());
+      const article = html('.my-single .my-page-content');
+      const title = clean(article.children('h1').text());
+      const body = article.children('.mt-2').html();
+      const apiUrl = html('link[rel="alternate"][type="application/json"]').attr('href');
+      if (article.length !== 1 || title !== event.title || !body ||
+          (apiUrl && apiUrl !== culture + '/wp-json/wp/v2/posts/' + event.sourceKey)) {
+        result.rejected++;
+        continue;
+      }
+      const current = municipalArticle(record(post), title, plainHtml(body), now);
+      if (!current || current.startsAt !== event.startsAt || current.venue !== event.venue) {
+        result.rejected++;
+        continue;
+      }
+      result.events.push({
+        ...current,
+        status: strongestStatus(event.status, current.status),
+        verifiedAt: now.toISOString(),
+      });
     } catch {
       result.rejected++;
     }
@@ -210,20 +250,42 @@ function jsonEvents(html: ReturnType<typeof load>): RecordValue[] {
   return events;
 }
 
+function strongestStatus(...statuses: SourceEvent['status'][]): SourceEvent['status'] {
+  if (statuses.includes('cancelled')) return 'cancelled';
+  return statuses.includes('draft') ? 'draft' : 'published';
+}
+
 function afishaEvent(html: ReturnType<typeof load>, url: URL, now: Date): SourceEvent | undefined {
-  const raw = jsonEvents(html).find((event) => publicPage(event.url, afisha, eventPath)?.href === url.href);
-  if (!raw) return;
+  const entries = jsonEvents(html)
+    .filter((event) => publicPage(event.url, afisha, eventPath)?.href === url.href)
+    .map((raw) => ({
+      raw,
+      startsAt: inUfa(raw.startDate),
+      statusName: clean(raw.eventStatus)?.split('/').at(-1),
+    }));
+  if (entries.length === 0) return;
+  const cancelled = entries.filter((entry) => entry.statusName === 'EventCancelled');
+  const deferred = entries.filter((entry) => ['EventPostponed', 'EventMovedOnline'].includes(entry.statusName ?? ''));
+  const rescheduled = entries.filter((entry) => entry.statusName === 'EventRescheduled' && entry.startsAt);
+  const uniqueReschedule = rescheduled.length > 0 && new Set(rescheduled.map((entry) => entry.startsAt)).size === 1;
+  const conflictingDates = new Set(entries.map((entry) => entry.startsAt)).size > 1;
+  const selected = (cancelled.length > 0 ? cancelled : deferred.length > 0 ? deferred : uniqueReschedule ? rescheduled : entries)
+    .find((entry) => entry.startsAt) ?? entries.find((entry) => entry.startsAt);
+  if (!selected) return;
+  const { raw, startsAt } = selected;
   const title = clean(raw.name);
-  const startsAt = inUfa(raw.startDate);
   const location = record(raw.location);
   const address = record(location.address);
   const city = clean(address.addressLocality);
   const venue = clean(location.name);
-  const statusName = clean(raw.eventStatus)?.split('/').at(-1);
   if (!title || !startsAt || !city || !/^Уфа$/i.test(city) || !venue) return;
-  if (statusName && !['EventCancelled', 'EventScheduled', 'EventPostponed', 'EventRescheduled', 'EventMovedOnline'].includes(statusName)) return;
-  const status = statusName === 'EventCancelled' ? 'cancelled' :
-    statusName === 'EventPostponed' || statusName === 'EventMovedOnline' ? 'draft' : 'published';
+
+  const notice = eventNotice(title, html('.uf-event-detail-title').text(),
+    plainHtml(html('.uf-event-description').html()), clean(raw.description) ?? '');
+  const unknownStatus = entries.some(({ statusName }) => statusName &&
+    !['EventCancelled', 'EventScheduled', 'EventPostponed', 'EventRescheduled', 'EventMovedOnline'].includes(statusName));
+  const status = strongestStatus(notice, cancelled.length > 0 ? 'cancelled' :
+    deferred.length > 0 || unknownStatus || (conflictingDates && !uniqueReschedule) ? 'draft' : 'published');
   if (status === 'published' && Date.parse(startsAt) <= now.getTime()) return;
 
   const endsAt = inUfa(raw.endDate);
