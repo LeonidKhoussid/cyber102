@@ -1,0 +1,16 @@
+services:
+  app:
+    build: .
+    ports:
+      - "127.0.0.1:${PORT:-3000}:3000"
+    environment:
+      PORT: 3000
+      BOOTSTRAP_CATALOG: ${BOOTSTRAP_CATALOG:-1}
+      CATALOG_PATH: /app/data/catalog.sqlite
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-}
+      BOT_TOKEN: ${BOT_TOKEN:-}
+      PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
+    volumes:
+      - catalog:/app/data
+volumes:
+  catalog:

@@ -184,8 +184,8 @@ function validateEvent(event: SourceEvent): SourceEvent {
   if (event.priceMin !== undefined && event.priceMax !== undefined && event.priceMax < event.priceMin) {
     throw new Error('Верхняя граница цены меньше нижней.');
   }
-  if (event.ageLimit !== undefined && ![0, 6, 12, 16, 18].includes(event.ageLimit)) {
-    throw new Error('Допустимые возрастные ограничения: 0, 6, 12, 16, 18.');
+  if (event.ageLimit !== undefined && (!Number.isInteger(event.ageLimit) || event.ageLimit < 0 || event.ageLimit > 21)) {
+    throw new Error('Укажите возрастное ограничение от 0 до 21 года.');
   }
   if (event.latitude !== undefined && (!Number.isFinite(event.latitude) || Math.abs(event.latitude) > 90)) {
     throw new Error('Некорректная широта.');
@@ -415,6 +415,7 @@ export function openCatalog(filename = 'data/catalog.sqlite', clock = () => new 
 
   return {
     search, getEvent, directories, importEvents, setStatus,
+    hasSources: () => Boolean(database.prepare('SELECT 1 FROM sources LIMIT 1').get()),
     close: () => database.close(),
     subscribe(subscriber: string, subscription: Subscription) {
       database.prepare('INSERT OR IGNORE INTO subscriptions (subscriber, city, category) VALUES (?, ?, ?)')
@@ -422,7 +423,7 @@ export function openCatalog(filename = 'data/catalog.sqlite', clock = () => new 
     },
     subscriptions(subscriber: string): Subscription[] {
       return database.prepare('SELECT city, category FROM subscriptions WHERE subscriber = ? ORDER BY city, category')
-        .all(subscriber) as Subscription[];
+        .all(subscriber).map(record => ({ city: String(record.city), category: record.category as Category }));
     },
     unsubscribe(subscriber: string) {
       return Number(database.prepare('DELETE FROM subscriptions WHERE subscriber = ?').run(subscriber).changes);
