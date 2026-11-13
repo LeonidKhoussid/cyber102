@@ -1,27 +1,20 @@
 {
   "name": "afisha-bashkortostan",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
-  "engines": {
-    "node": ">=24.15"
-  },
+  "workspaces": ["apps/*", "packages/*"],
+  "engines": { "node": ">=24.15" },
   "scripts": {
-    "dev": "node --env-file-if-exists=.env --watch src/main.ts",
-    "start": "node --env-file-if-exists=.env src/main.ts",
-    "refresh": "node --env-file-if-exists=.env src/refresh.ts",
+    "dev": "node --env-file-if-exists=.env scripts/dev.ts",
+    "start": "npm run dev",
+    "start:api": "node --env-file-if-exists=.env apps/api/src/main.ts",
+    "start:bot": "node --env-file-if-exists=.env apps/bot/src/main.ts",
+    "dev:web": "vite --config apps/web/vite.config.ts",
+    "build": "vite build --config apps/web/vite.config.ts",
+    "refresh": "node --env-file-if-exists=.env apps/api/src/refresh.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test test/*.test.ts"
+    "test": "node --test apps/*/test/*.test.ts"
   },
-  "dependencies": {
-    "@fastify/rate-limit": "11.2.2",
-    "cheerio": "1.2.0",
-    "csv-parse": "7.0.3",
-    "fastify": "5.12.8",
-    "grammy": "1.46.0"
-  },
-  "devDependencies": {
-    "@types/node": "24.19.2",
-    "typescript": "7.0.2"
-  }
+  "devDependencies": { "@types/node": "24.19.2", "typescript": "7.0.2" }
 }
