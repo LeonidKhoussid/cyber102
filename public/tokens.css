@@ -1,0 +1,20 @@
+:root {
+  color-scheme: light;
+  --color-paper: #f6f2e8;
+  --color-panel: #ebe6d9;
+  --color-field: #fffcf5;
+  --color-ink: #1d2822;
+  --color-muted: #555b51;
+  --color-accent: #205743;
+  --color-accent-hover: #143e2e;
+  --color-accent-soft: #e1e9de;
+  --color-rule: #b8b6a7;
+  --color-control: #8d8e80;
+  --color-alert: #873a30;
+  --color-alert-soft: #f1e1d8;
+  --color-on-accent: #fffdf6;
+  --font-display: "Playfair Display", Georgia, "Times New Roman", serif;
+  --font-body: system-ui, sans-serif;
+  --shell-width: 76rem;
+  --page-gutter: clamp(1rem, 4.75vw, 4.5rem);
+}
