@@ -5,6 +5,7 @@ services:
       - "127.0.0.1:${PORT:-3000}:3000"
     environment:
       PORT: 3000
+      HOST: 0.0.0.0
       BOOTSTRAP_CATALOG: ${BOOTSTRAP_CATALOG:-1}
       CATALOG_PATH: /app/data/catalog.sqlite
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}

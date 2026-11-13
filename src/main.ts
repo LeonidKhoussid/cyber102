@@ -28,7 +28,7 @@ process.once('SIGINT', stop);
 process.once('SIGTERM', stop);
 
 try {
-  await server.listen({ port, host: '0.0.0.0' });
+  await server.listen({ port, host: process.env.HOST ?? '127.0.0.1' });
 } catch (error) {
   await stop();
   throw error;
