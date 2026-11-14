@@ -74,6 +74,7 @@ const spec = {
       requestBody: { required: true, content: { 'application/json': { schema: {
         type: 'object', required: ['message'], properties: {
           message: { type: 'string', minLength: 1, maxLength: 1200 }, context: { type: 'object' },
+          planExperience: { type: 'boolean', description: 'Уточнять город и предлагать план дня' },
         },
       } } } },
       responses: {
@@ -157,14 +158,20 @@ export function registerApi(server: FastifyInstance, catalog: CatalogStore, opti
   transcribe?: Transcribe;
 }) {
   const token = options.adminToken;
-  server.post<{ Body: { message?: unknown; context?: unknown } }>('/api/v1/discover', {
+  const yandexApiKey = process.env.YANDEX_MAPS_JS_API_KEY?.trim();
+  server.get('/api/v1/maps/config', (_request, reply) => {
+    reply.header('cache-control', 'no-store');
+    return yandexApiKey && /^[a-z0-9_-]{1,150}$/i.test(yandexApiKey) ? { yandexApiKey } : {};
+  });
+
+  server.post<{ Body: { message?: unknown; context?: unknown; planExperience?: unknown } }>('/api/v1/discover', {
     config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
   }, async (request, reply) => {
     const message = request.body?.message;
     if (typeof message !== 'string' || !message.trim() || message.length > 1200) {
       return failure(reply, 400, 'invalid_message', 'Напишите запрос длиной до 1200 символов.');
     }
-    return options.discover(message.trim(), request.body.context);
+    return options.discover(message.trim(), request.body.context, { planExperience: request.body.planExperience === true });
   });
 
   // Scope binary parsing to voice requests. Other endpoints keep their existing parsers.

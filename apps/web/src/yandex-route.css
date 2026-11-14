@@ -1,0 +1,45 @@
+.yandex-route {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-small);
+  position: relative;
+}
+
+.yandex-route-map {
+  width: 100%;
+  height: clamp(14rem, 38vw, 22rem);
+  overflow: hidden;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color-scheme: light;
+}
+
+.yandex-route-map-hidden {
+  position: absolute;
+  inset: 0 0 auto;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.yandex-route-status p {
+  margin: 0;
+  color: var(--color-muted);
+  font-size: var(--text-sm);
+}
+
+.yandex-route-status strong {
+  color: var(--color-text);
+}
+
+.yandex-route-status button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--color-accent);
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.yandex-route-link {
+  justify-self: start;
+}

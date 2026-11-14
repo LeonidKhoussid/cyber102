@@ -83,7 +83,7 @@ export async function buildServer(catalog: CatalogStore, options: {
     const { pool, origin } = options.accounts;
     const env = { ...process.env, PUBLIC_SITE_URL: origin };
     registerAccounts(server, pool, { origin, telegramEnabled: telegramLoginConfigured(env) });
-    registerChats(server, pool, { origin, discover });
+    registerChats(server, pool, { origin, discover, catalog });
     registerTelegramLogin(server, { env, onIdentity: async (request, reply, identity, secure) => {
       const user = await upsertTelegramUser(pool, identity.subject, identity.name);
       await createSession(pool, reply, user.id, secure, request);

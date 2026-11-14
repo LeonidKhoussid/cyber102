@@ -15,6 +15,201 @@ const sample: SourceEvent = {
   sourceName: 'Контрольный источник', sourceKey: 'match', raw: null,
 };
 
+const planExperience = { planExperience: true };
+
+test('family day conversation accepts an abbreviated weekday and offers the nearest date in the selected city', async () => {
+  const catalog = openCatalog(':memory:', clock);
+  try {
+    catalog.importEvents([
+      { ...sample, city: 'Салават', title: 'Семейный концерт', startsAt: '2026-11-19T12:00:00+05:00', endsAt: undefined },
+      { ...sample, city: 'Уфа', title: 'Выставка в понедельник', startsAt: '2026-11-16T12:00:00+05:00', endsAt: undefined, sourceKey: 'ufa' },
+    ]);
+    const discover = createDiscovery(catalog, { clock, interpret: async message => ({ query: message }) });
+    const initial = await discover('Я хочу провести весь день с семьёей', undefined, planExperience);
+    assert.equal(initial.context.query, undefined);
+    assert.equal(initial.context.preference, 'Семейный досуг');
+    const city = await discover('Несколько событий и в городе Салават', initial.context, planExperience);
+    assert.match(city.message, /на какой именно день/iu);
+    const monday = await discover('на пн', city.context, planExperience);
+    assert.equal(monday.context.date, '2026-11-16');
+    assert.equal(monday.context.query, undefined);
+    assert.match(monday.message, /транспорт/u);
+    const answer = await discover('На машине', { ...monday.context, query: 'на пн' }, planExperience);
+    assert.equal(answer.status, 'no_results');
+    assert.equal(answer.context.query, undefined);
+    assert.equal(answer.context.city, 'Салават');
+    assert.match(answer.message, /понедельник, 16 ноября/u);
+    assert.match(answer.message, /четверг, 19 ноября/u);
+    assert.ok(answer.suggestions.includes('А 19 ноября?'));
+    const next = await discover('А 19 ноября?', answer.context, planExperience);
+    assert.equal(next.context.transport, 'car');
+    assert.equal(next.events[0]?.event.title, 'Семейный концерт');
+  } finally { catalog.close(); }
+});
+
+test('date follow-ups recognize weekday short forms and keep genuine search titles', async () => {
+  const catalog = openCatalog(':memory:', clock);
+  try {
+    catalog.importEvents([sample]);
+    const discover = createDiscovery(catalog, { clock, interpret: async message => ({ query: message }) });
+    const dates = { 'ПН.': '2026-11-16', 'на вт': '2026-11-17', 'в ср.': '2026-11-18', 'чт': '2026-11-19',
+      'на пт': '2026-11-13', 'А сб?': '2026-11-14', 'на вс': '2026-11-15' };
+    for (const [reply, date] of Object.entries(dates)) {
+      const answer = await discover(reply, { city: 'Стерлитамак', query: 'Семейная постановка' });
+      assert.equal(answer.context.date, date, reply);
+      assert.equal(answer.context.query, 'Семейная постановка', reply);
+    }
+    const title = await discover('Найди спектакль «ПН» в Стерлитамаке');
+    assert.equal(title.context.date, undefined);
+    assert.equal(title.context.query, 'ПН');
+    for (const reply of ['на пн или вт', 'Подбери несколько событий в Стерлитамаке на пн или вт']) {
+      const ambiguous = await discover(reply, { city: 'Стерлитамак', planMode: 'day' }, planExperience);
+      assert.equal(ambiguous.context.date, undefined);
+      assert.equal(ambiguous.context.query, undefined);
+      assert.match(ambiguous.message, /на какой именно день/iu);
+    }
+  } finally { catalog.close(); }
+});
+
+test('planning asks for missing city and event count even if a venue identifies a city', async () => {
+  const catalog = openCatalog(':memory:', clock);
+  try {
+    catalog.importEvents([{ ...sample, venue: 'Дворец культуры' }]);
+    const discover = createDiscovery(catalog, { clock });
+    const initial = await discover('Что есть во Дворце культуры завтра?', undefined, planExperience);
+    assert.equal(initial.status, 'clarify');
+    assert.equal(initial.context.city, undefined);
+    assert.match(initial.message, /город/u);
+    assert.match(initial.message, /одно событие или несколько/u);
+    const single = await discover('Одно событие', initial.context, planExperience);
+    assert.equal(single.context.planMode, 'single');
+    assert.equal(single.context.query, undefined);
+    const result = await discover('Стерлитамак', single.context, planExperience);
+    assert.equal(result.status, 'matches');
+    assert.equal(result.events[0]?.event.venue, 'Дворец культуры');
+    assert.equal(result.events.length, 1);
+  } finally { catalog.close(); }
+});
+
+test('planning recognizes explicit single-ticket requests and numbered plan dates', async () => {
+  const catalog = openCatalog(':memory:', clock);
+  try {
+    catalog.importEvents([{ ...sample, category: 'cinema', title: 'Семейное кино' }]);
+    const discover = createDiscovery(catalog, { clock });
+    const single = await discover('Хочу один сеанс в Стерлитамаке 14 ноября', undefined, planExperience);
+    assert.equal(single.context.planMode, 'single');
+    const unspecifiedCity = await discover('Нужен план на 14 ноября, на машине', undefined, planExperience);
+    assert.equal(unspecifiedCity.context.planMode, 'day');
+    assert.match(unspecifiedCity.message, /город/u);
+    assert.doesNotMatch(unspecifiedCity.message, /одно событие или несколько/u);
+  } finally { catalog.close(); }
+});
+
+test('day planning preserves an explicit count, asks for one day and transport, and ranks same-day picks', async () => {
+  const catalog = openCatalog(':memory:', clock);
+  try {
+    catalog.importEvents([
+      sample,
+      { ...sample, title: 'Утренняя выставка', category: 'exhibition', startsAt: '2026-11-14T11:00:00+05:00', sourceKey: 'exhibition' },
+      { ...sample, title: 'Завтрашняя постановка', startsAt: '2026-11-15T18:00:00+05:00', endsAt: undefined, sourceKey: 'sunday' },
+    ]);
+    const discover = createDiscovery(catalog, { clock, recommend: async (_message, _context, candidates) => ({
+      picks: ['Утренняя выставка', 'Семейная постановка'].map(title => ({ id: candidates.find(event => event.title === title)!.id })),
+    }) });
+    const initial = await discover('Подбери 2 события в Стерлитамаке на выходные');
+    assert.equal(initial.status, 'clarify');
+    assert.equal(initial.context.planMode, 'day');
+    assert.equal(initial.context.planCount, 2);
+    assert.match(initial.message, /день/u);
+    const date = await discover('В субботу', initial.context);
+    assert.equal(date.context.date, '2026-11-14');
+    assert.match(date.message, /транспорт/u);
+    const transport = await discover('На автобусе', date.context);
+    assert.equal(transport.context.transport, 'transit');
+    assert.equal(transport.context.query, undefined);
+    assert.match(transport.message, /[Оо]ткуда/u);
+    const origin = await discover('ул. Ленина, 10', transport.context);
+    assert.equal(origin.context.origin, 'ул. Ленина, 10');
+    assert.equal(origin.context.planCount, 2);
+    assert.deepEqual(origin.events.map(({ event }) => event.title), ['Утренняя выставка', 'Семейная постановка']);
+    assert.ok(origin.events.every(({ reasons }) => reasons.every(reason => !/мин на машине/u.test(reason))));
+  } finally { catalog.close(); }
+});
+
+test('day planning asks about ambiguous transport and never treats walking as driving', async () => {
+  const catalog = openCatalog(':memory:', clock);
+  try {
+    catalog.importEvents([sample, { ...sample, title: 'Утренняя выставка', category: 'exhibition',
+      startsAt: '2026-11-14T11:00:00+05:00', sourceKey: 'walking-preview' }]);
+    let drivingCalls = 0;
+    const discover = createDiscovery(catalog, { clock, travel: async (_origin, events) => {
+      drivingCalls++;
+      return new Map(events.map(({ id }) => [id, 10]));
+    }, recommend: async (_message, context, candidates) => ({ picks: candidates.filter(event =>
+      context.transport === 'walk' && event.category === 'theatre').map(({ id }) => ({ id })) }) });
+    const initial = await discover('Собери план на завтра в Стерлитамаке, на машине или пешком, доехать не больше 20 минут');
+    assert.equal(initial.context.planMode, 'day');
+    assert.equal(initial.context.transport, undefined);
+    const walking = await discover('Пешком', initial.context);
+    assert.equal(walking.context.transport, 'walk');
+    assert.equal(walking.events.length, 0);
+    assert.match(walking.message, /не могу проверить/u);
+    assert.match(walking.message, /[Оо]ткуда/u);
+    const withOrigin = await discover('Ленина 10', walking.context);
+    assert.equal(withOrigin.context.origin, 'Ленина 10');
+    assert.deepEqual(withOrigin.alternatives?.map(({ event }) => event.title), ['Семейная постановка', 'Утренняя выставка']);
+    assert.ok(withOrigin.alternatives?.every(({ reasons }) => reasons.includes('Время в пути не проверено')));
+    assert.equal(drivingCalls, 0);
+    const invalid = await discover('Подбери 5 событий в Стерлитамаке завтра');
+    assert.equal(invalid.status, 'clarify');
+    assert.match(invalid.message, /до четыр[её]х/u);
+  } finally { catalog.close(); }
+});
+
+test('day planning keeps early preferences and declines to infer a per-event budget from a day total', async () => {
+  const catalog = openCatalog(':memory:', clock);
+  try {
+    catalog.importEvents([sample]);
+    const discover = createDiscovery(catalog, { clock });
+    const interest = await discover('Люблю лёгкие комедии', undefined, planExperience);
+    assert.equal(interest.context.preference, 'Люблю лёгкие комедии');
+    assert.equal(interest.context.query, undefined);
+    const mixed = await discover('Подбери несколько событий завтра в Стерлитамаке, люблю театр и выставки. Поеду на машине.', undefined, planExperience);
+    assert.equal(mixed.context.preference, 'люблю театр и выставки');
+    assert.equal(mixed.context.category, undefined);
+    const initial = await discover('Подбери несколько событий завтра в Стерлитамаке, общий бюджет 900 рублей на весь день', interest.context, planExperience);
+    assert.equal(initial.status, 'clarify');
+    assert.match(initial.message, /бюджет на одно событие/u);
+    assert.equal(initial.events.length, 0);
+    assert.equal(initial.context.budget, undefined);
+    assert.equal(initial.context.preference, 'Люблю лёгкие комедии');
+  } finally { catalog.close(); }
+});
+
+test('an open day shortlist includes different parts of the day and categories', async () => {
+  const catalog = openCatalog(':memory:', clock);
+  try {
+    catalog.importEvents([
+      ...Array.from({ length: 30 }, (_, index) => ({ ...sample, title: `Фильм ${index}`, category: 'cinema' as const,
+        startsAt: '2026-11-14T10:30:00+05:00', endsAt: '2026-11-14T12:00:00+05:00', sourceKey: `many-films-${index}` })),
+      { ...sample, title: 'Выставка', category: 'exhibition', startsAt: '2026-11-14T15:00:00+05:00', sourceKey: 'afternoon' },
+      sample,
+      { ...sample, title: 'Отменённая экскурсия', category: 'tour', status: 'cancelled', sourceKey: 'cancelled' },
+    ]);
+    const discover = createDiscovery(catalog, { clock, recommend: async (_message, context, candidates) => {
+      assert.equal(context.transport, 'car');
+      return { picks: candidates.filter(event => event.category === 'cinema').slice(0, 5).map(event => ({ id: event.id })) };
+    } });
+    const day = await discover('Несколько событий в Стерлитамаке завтра, поеду на машине');
+    assert.ok(day.events.some(({ event }) => event.category === 'exhibition'));
+    assert.ok(day.events.some(({ event }) => event.category === 'theatre'));
+    assert.ok(day.events.every(({ event }) => event.status === 'published'));
+    const films = await discover('Только кино', day.context);
+    assert.equal(films.status, 'matches');
+    assert.ok(films.events.every(({ event }) => event.category === 'cinema'));
+  } finally { catalog.close(); }
+});
+
 test('uses candidate-based recommendations and carries a taste reply without dropping hard filters', async () => {
   const catalog = openCatalog(':memory:', clock);
   try {

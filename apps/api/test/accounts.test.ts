@@ -6,7 +6,7 @@ import Fastify from 'fastify';
 import pg from 'pg';
 import { initializeAccounts, registerAccounts, upsertTelegramUser } from '../src/accounts.ts';
 import { initializeChats, registerChats } from '../src/chats.ts';
-import type { DiscoveryResponse } from '@afisha/contracts';
+import type { CatalogEvent, DiscoveryResponse } from '@afisha/contracts';
 
 const databaseUrl = process.env.AFISHA_ACCOUNT_TEST_DATABASE_URL;
 const origin = 'https://afisha.example';
@@ -19,6 +19,12 @@ test('PostgreSQL account sessions isolate saved chats and preserve discovery tur
   await admin.query('CREATE SCHEMA ' + schema);
   const pool = new pg.Pool({ connectionString: databaseUrl, application_name: schema, options: '-c search_path=' + schema });
   const server = Fastify();
+  const date = '2026-11-21';
+  const planEvents: CatalogEvent[] = Array.from({ length: 8 }, (_, index) => ({
+    id: randomUUID(), title: `Событие ${index + 1}`, category: 'concert', status: 'published',
+    startsAt: `2026-11-${index === 6 ? 22 : 21}T${10 + index}:00:00+05:00`,
+    city: index === 7 ? 'Салават' : 'Уфа', venue: 'Концертный зал', sources: [],
+  }));
   let calls = 0;
   let firstStarted!: () => void;
   let releaseFirst!: () => void;
@@ -31,18 +37,22 @@ test('PostgreSQL account sessions isolate saved chats and preserve discovery tur
       await firstCanFinish;
     }
     if (message === 'Ошибка поиска') throw Error('Controlled discovery failure');
+    if (message === 'План дня') return {
+      status: 'matches', message, context: { city: 'Уфа', date, planMode: 'day' }, suggestions: [], constraints: [],
+      events: planEvents.slice(0, 5).map(event => ({ event, reasons: [] })),
+    };
     return {
       status: 'no_results', message: 'Город: ' + (message === 'Театры в Уфе' ? 'Уфа' : (prior as { city?: string } | undefined)?.city),
       context: { city: 'Уфа' }, suggestions: [], constraints: [], events: [],
     };
   };
-  const request = (method: 'GET' | 'POST' | 'PATCH' | 'DELETE', path: string, payload?: object, cookie?: string, requestOrigin = origin) =>
+  const request = (method: 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE', path: string, payload?: object, cookie?: string, requestOrigin = origin) =>
     server.inject({ method, url: '/api/v1' + path, payload, headers: { origin: requestOrigin, ...(cookie ? { cookie } : {}) } });
   try {
     await initializeAccounts(pool);
     await initializeChats(pool);
     registerAccounts(server, pool, { origin, telegramEnabled: true });
-    registerChats(server, pool, { origin, discover });
+    registerChats(server, pool, { origin, discover, catalog: { getEvent: eventId => planEvents.find(event => event.id === eventId) } });
 
     assert.deepEqual((await request('GET', '/auth/session')).json(), { user: null, telegramEnabled: true });
     assert.equal((await request('GET', '/chats')).statusCode, 401);
@@ -111,14 +121,46 @@ test('PostgreSQL account sessions isolate saved chats and preserve discovery tur
     assert.deepEqual(history.json().turns.map((turn: { requestId: string }) => turn.requestId), ['one', 'two']);
     assert.equal((await request('PATCH', url, { title: 'Спектакли' }, cookie)).json().chat.title, 'Спектакли');
 
+    const planUrl = url + '/event-plan';
+    const eventUrl = (event: CatalogEvent) => `${planUrl}/${event.id}`;
+    const save = (event: CatalogEvent, day = date) => request('PUT', eventUrl(event), { date: day }, cookie);
+    const planTurn = await request('POST', url + '/turns', { message: 'План дня', requestId: 'plan', planExperience: true }, cookie);
+    assert.equal(planTurn.statusCode, 200);
+    assert.deepEqual((await request('GET', planUrl, undefined, cookie)).json(), { events: [] });
+    assert.equal((await request('GET', planUrl)).statusCode, 401);
+    assert.equal((await request('GET', planUrl, undefined, bobCookie)).statusCode, 404);
+    assert.equal((await request('PUT', eventUrl(planEvents[0]), { date }, bobCookie)).statusCode, 404);
+    assert.equal((await request('PUT', eventUrl(planEvents[0]), { date }, cookie, 'https://other.example')).statusCode, 403);
+    assert.equal((await save(planEvents[0], '2026-02-31')).statusCode, 400);
+    assert.equal((await save(planEvents[5])).json().code, 'event_not_offered');
+    assert.equal((await save(planEvents[6])).json().code, 'different_event_plan');
+
+    const concurrentSaves = await Promise.all(planEvents.slice(0, 5).map(event => save(event)));
+    assert.deepEqual(concurrentSaves.map(result => result.statusCode).sort(), [200, 200, 200, 200, 409]);
+    assert.equal(concurrentSaves.find(result => result.statusCode === 409)?.json().code, 'event_plan_full');
+    const { events: selected } = (await request('GET', planUrl, undefined, cookie)).json() as { events: CatalogEvent[] };
+    assert.equal(selected.length, 4);
+    assert.deepEqual(selected.map(event => event.startsAt), selected.map(event => event.startsAt).sort());
+    assert.equal((await save(selected[0])).statusCode, 200);
+    assert.equal((await save(planEvents[7])).json().code, 'different_event_plan');
+    const updated = planEvents.find(event => event.id === selected[0].id)!;
+    updated.startsAt = '2026-11-22T10:00:00+05:00';
+    assert.equal((await request('GET', planUrl, undefined, cookie)).json().events[0].status, 'cancelled');
+    assert.equal((await request('DELETE', eventUrl(updated), undefined, bobCookie)).statusCode, 404);
+    assert.equal((await request('DELETE', eventUrl(updated), undefined, cookie)).json().events.length, 3);
+    const notSelected = planEvents[concurrentSaves.findIndex(result => result.statusCode === 409)];
+    assert.equal((await save(notSelected)).json().events.length, 4);
+
     const login = await request('POST', '/auth/login', credentials, cookie);
     assert.equal(login.statusCode, 200, login.body);
     assert.equal((await request('GET', '/auth/session', undefined, cookie)).json().user, null);
     const newCookie = String(login.headers['set-cookie']).split(';')[0]!;
     assert.equal((await request('GET', '/chats', undefined, newCookie)).json().chats[0].id, id);
+    assert.equal((await request('GET', planUrl, undefined, newCookie)).json().events.length, 4);
     assert.equal((await request('DELETE', url, undefined, newCookie)).statusCode, 204);
     assert.equal((await request('GET', url, undefined, newCookie)).statusCode, 404);
     assert.equal((await pool.query('SELECT count(*) AS count FROM account_chat_turns')).rows[0].count, '0');
+    assert.equal((await pool.query('SELECT count(*) AS count FROM account_chat_plan_events')).rows[0].count, '0');
     assert.equal((await request('POST', '/auth/logout', undefined, newCookie)).statusCode, 204);
     assert.equal((await request('GET', '/auth/session', undefined, newCookie)).json().user, null);
 

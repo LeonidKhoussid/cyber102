@@ -55,6 +55,55 @@ function only(events, predicate, condition) {
 }
 
 const cases = [
+  ['theme switch applies to the whole site and persists across navigation and reload', async page => {
+    const theme = page.getByRole('switch', { name: 'Светлая тема' });
+    const appearance = () => page.evaluate(() => ({
+      scheme: getComputedStyle(document.documentElement).colorScheme,
+      background: getComputedStyle(document.body).backgroundColor,
+      font: getComputedStyle(document.body).fontFamily,
+    }));
+    const dark = await appearance();
+    assert.equal(dark.scheme, 'dark');
+    assert.match(dark.font, /^Manrope/);
+    assert.equal(await theme.getAttribute('aria-checked'), 'false');
+    await theme.focus();
+    await theme.press('Space');
+    assert.equal(await theme.getAttribute('aria-checked'), 'true');
+    const light = await appearance();
+    assert.equal(light.scheme, 'light');
+    assert.notEqual(light.background, dark.background);
+    await page.getByRole('link', { name: 'Все события', exact: true }).click();
+    await page.getByRole('heading', { level: 1, name: 'Все события' }).waitFor();
+    await page.reload();
+    assert.equal(await theme.getAttribute('aria-checked'), 'true');
+    assert.deepEqual(await appearance(), light);
+    await theme.click();
+    await page.getByRole('link', { name: 'Поиск', exact: true }).click();
+    await page.getByRole('heading', { level: 1, name: 'Куда пойдём?' }).waitFor();
+    assert.deepEqual(await appearance(), dark);
+  }],
+  ['question markers preview and jump to earlier turns on desktop and mobile', async page => {
+    const first = 'Какие концерты будут в Уфе?';
+    const second = 'Что посмотреть в парке Якутова 15 ноября?';
+    const third = 'Куда сходить в Белорецке 28 декабря?';
+    const firstAnswer = await submit(page, first);
+    const jump = page.getByRole('navigation', { name: 'Вопросы в этом диалоге' });
+    assert.equal(await jump.count(), 0);
+    await submit(page, second);
+    await submit(page, third);
+    assert.equal(await jump.getByRole('button').count(), 3);
+    const firstMarker = jump.getByRole('button', { name: 'Вопрос 1. ' + first, exact: true });
+    await firstMarker.hover();
+    const preview = page.locator('.question-jump-preview');
+    await preview.getByText(first, { exact: true }).waitFor();
+    await preview.getByText(firstAnswer.result.message, { exact: true }).waitFor();
+    await firstMarker.press('Enter');
+    await page.waitForFunction(() => document.activeElement === document.querySelector('.turn .question') &&
+      document.querySelector('.question-jump-marker')?.getAttribute('aria-current') === 'location');
+    await page.setViewportSize({ width: 390, height: 844 });
+    await jump.getByRole('button', { name: 'Вопрос 2. ' + second, exact: true }).click();
+    await page.waitForFunction(() => document.activeElement === document.querySelectorAll('.turn .question')[1]);
+  }],
   ['typo in a city keeps the weekend and excludes other cities', async page => {
     const { events } = await submit(page, 'Что есть в Стирлитамаке в эти выходные?');
     only(events, event => event.city === 'Стерлитамак', 'Стерлитамак');
@@ -224,13 +273,148 @@ async function checkVoice(page) {
   await page.getByRole('link', { name: /Концерт кураистов/u }).waitFor();
 }
 
-async function runCase(name, run, origin) {
+const planDay = '2027-02-03';
+const planTitles = ['Дневная программа 1', 'Дневная программа 2', 'Дневная программа 3', 'Дневная программа 4', 'Дневная программа 5'];
+
+function importPlanEvents() {
+  const originals = planTitles.map((title, index) => ({
+    title, startsAt: `${planDay}T${10 + index * 2}:00:00+05:00`, endsAt: `${planDay}T${10 + index * 2}:55:00+05:00`,
+    venue: `Тестовая площадка ${index + 1}`, category: 'other', city: 'Уфа', latitude: 54.72 + index * .01, longitude: 55.94,
+    status: 'published', sourceName: 'Controlled planner fixture', sourceKey: `planner-${index}`,
+    sourceType: 'import', sourceUrl: 'https://example.org/planner', raw: null,
+  }));
+  originals[0].endsAt = `${planDay}T11:59:00+05:00`;
+  const report = catalog.importEvents([...originals, { ...originals[0], title: 'Другая дата', sourceKey: 'planner-other-day',
+    startsAt: '2027-02-04T10:00:00+05:00', endsAt: '2027-02-04T11:00:00+05:00' }]);
+  assert.deepEqual(report.rejected, []);
+}
+
+async function checkSingleChoice(page) {
+  const initial = await submit(page, `Куда сходить ${planDay}?`);
+  assert.match(initial.result.message, /город/u);
+  assert.match(initial.result.message, /одно событие или несколько/u);
+  assert.equal(initial.result.context.city, undefined);
+  assert.equal(initial.events.length, 0);
+  const city = await submit(page, 'Уфа');
+  assert.equal(city.result.context.city, 'Уфа');
+  assert.equal(city.events.length, 0);
+  const single = await submit(page, 'Одно событие', true);
+  assert.equal(single.result.context.planMode, 'single');
+  assert.equal(single.events.length, 1);
+  assert.ok(planTitles.includes(single.events[0].title));
+  assert.equal(await page.getByRole('button', { name: 'Добавить в план' }).count(), 0);
+}
+
+async function checkFamilyWeekday(page) {
+  const initial = await submit(page, 'Я хочу провести весь день с семьёей');
+  assert.equal(initial.result.context.preference, 'Семейный досуг');
+  const city = await submit(page, 'Несколько событий и в городе Салават');
+  assert.equal(city.result.context.city, 'Салават');
+  const monday = await submit(page, 'на пн');
+  assert.equal(monday.result.context.date, '2026-11-16');
+  assert.equal(monday.result.context.query, undefined);
+  assert.match(monday.result.message, /транспорт/u);
+  const unavailable = await submit(page, 'На машине', true);
+  assert.equal(unavailable.result.status, 'no_results');
+  assert.match(unavailable.result.message, /понедельник, 16 ноября/u);
+  const alternative = await submit(page, 'А 14 ноября?', true);
+  assert.equal(alternative.result.context.transport, 'car');
+  assert.equal(alternative.result.context.date, '2026-11-14');
+  assert.ok(alternative.events.some(event => event.city === 'Салават' && event.title === 'Мастер-класс «Гончарное дело» для детей'));
+}
+
+const mapsFixture = `
+  window.ymaps = {
+    ready: success => success(),
+    Map: class {
+      constructor(node) {
+        node.dataset.mapRendered = 'true';
+        this.geoObjects = { add: route => queueMicrotask(() => route.listeners.get('requestsuccess')?.()),
+          remove() {}, getBounds: () => [[54.7,55.9],[54.8,56]] };
+      }
+      setBounds() {}
+      destroy() {}
+    },
+    multiRouter: { MultiRoute: class {
+      constructor(model) {
+        (window.testRouteRequests ??= []).push(model);
+        this.points = model.referencePoints;
+        this.listeners = new Map();
+        this.model = { events: { add: (event, listener) => this.listeners.set(event, listener),
+          remove: event => this.listeners.delete(event) }, destroy() {} };
+      }
+      getActiveRoute() {
+        const count = this.points.length - 1;
+        const metrics = count => ({ get: key => ({ duration: { value: count * 480 }, distance: { value: count * 1400 } })[key] });
+        return { properties: metrics(count), getPaths: () => ({ each: callback => {
+          for (let index = 0; index < count; index++) callback({ properties: metrics(1) });
+        } }) };
+      }
+    } },
+  };
+`;
+
+async function checkDayPlan(page, withMaps) {
+  await page.route('**/api/v1/maps/config', route => route.fulfill({ json: withMaps ? { yandexApiKey: 'fixture-key' } : {} }));
+  await page.route('https://api-maps.yandex.ru/2.1/**', route => {
+    assert.ok(withMaps, 'The SDK should load only with a configured key');
+    return route.fulfill({ contentType: 'application/javascript', body: mapsFixture });
+  });
+  await submit(page, `Куда сходить в Уфе ${planDay}?`);
+  const plural = await submit(page, 'Несколько событий', true);
+  assert.match(plural.result.message, /транспорт/u);
+  const transport = await submit(page, 'На общественном транспорте', true);
+  assert.equal(transport.result.context.transport, 'transit');
+  assert.match(transport.result.message, /откуда/iu);
+  const proposed = await submit(page, '54.701, 55.901');
+  assert.deepEqual(proposed.events.map(event => event.title).sort(), [...planTitles].sort());
+  const card = title => proposed.turn.locator('.event-card').filter({ has: page.getByRole('heading', { level: 3, name: title, exact: true }) });
+  const add = title => card(title).getByRole('button', { name: 'Добавить в план' });
+  const plan = page.getByRole('region', { name: 'План дня', exact: true });
+  const maps = plan.getByRole('region', { name: 'Маршрут в Яндекс Картах' });
+
+  await add(planTitles[1]).click();
+  assert.equal(await maps.count(), 0);
+  await add(planTitles[0]).click();
+  const ordered = plan.getByRole('list', { name: 'События по времени' });
+  assert.deepEqual(await ordered.getByRole('link').allTextContents(), planTitles.slice(0, 2));
+  const link = maps.getByRole('link', { name: 'Открыть в Яндекс Картах' });
+  await link.waitFor();
+  const route = new URL(await link.getAttribute('href'));
+  assert.equal(route.hostname, 'yandex.ru');
+  assert.equal(route.searchParams.get('rtt'), 'mt');
+  assert.equal(route.searchParams.get('rtext').split('~').length, 3);
+  if (withMaps) {
+    await maps.getByText(/в пути около 16 мин/iu).waitFor();
+    assert.equal(await plan.getByRole('list', { name: 'Отрезки маршрута' }).getByRole('listitem').count(), 2);
+    await plan.getByText(/Не хватает времени на дорогу/u).waitFor();
+    const request = await page.evaluate(() => window.testRouteRequests.at(-1));
+    assert.equal(request.params.routingMode, 'masstransit');
+    assert.deepEqual(request.referencePoints, [[54.701, 55.901], ...proposed.events.filter(event => planTitles.slice(0, 2).includes(event.title))
+      .sort((first, second) => first.startsAt.localeCompare(second.startsAt)).map(event => [event.latitude, event.longitude])]);
+  } else {
+    await maps.getByText(/время в пути.*в яндекс картах/iu).waitFor();
+    assert.equal(await plan.getByRole('list', { name: 'Отрезки маршрута' }).count(), 0);
+  }
+  await add(planTitles[2]).click();
+  await add(planTitles[3]).click();
+  assert.equal(await add(planTitles[4]).isDisabled(), true);
+  await plan.getByText('4 из 4', { exact: true }).waitFor();
+  await plan.getByRole('button', { name: `Убрать из плана: ${planTitles[1]}` }).click();
+  assert.equal(await add(planTitles[4]).isEnabled(), true);
+}
+
+async function runCase(name, run, origin, planning = false) {
   const context = await browser.newContext({ viewport: { width: 375, height: 850 } });
   const page = await context.newPage();
   const errors = [];
   page.setDefaultTimeout(4000);
   page.on('pageerror', error => errors.push(error.message));
   try {
+    // Exercise the established search rules independently of the new onboarding turns.
+    if (!planning) await page.route('**/api/v1/discover', route => route.continue({
+      postData: JSON.stringify({ ...route.request().postDataJSON(), planExperience: false }),
+    }));
     await page.goto(origin);
     await run(page);
     assert.deepEqual(errors, []);
@@ -244,9 +428,7 @@ async function runCase(name, run, origin) {
   }
 }
 
-try {
-  const { report } = importAnalyticsFixture(catalog);
-  assert.equal(report.rejected.length, 0);
+async function startFixture() {
   api = await buildServer(catalog, { clock, disableModel: true });
   const previousOrigin = process.env.API_ORIGIN;
   try {
@@ -263,7 +445,14 @@ try {
     else process.env.API_ORIGIN = previousOrigin;
   }
   await web.listen();
-  const origin = `http://127.0.0.1:${web.httpServer.address().port}`;
+  return `http://127.0.0.1:${web.httpServer.address().port}`;
+}
+
+try {
+  const { report } = importAnalyticsFixture(catalog);
+  assert.equal(report.rejected.length, 0);
+  importPlanEvents();
+  const origin = await startFixture();
   browser = await chromium.launch({
     executablePath: process.env.CHROMIUM_EXECUTABLE,
     args: ['--autoplay-policy=no-user-gesture-required'],
@@ -274,7 +463,17 @@ try {
   }
   console.log(`Search scenarios: ${passes}/${cases.length} passed (local parser, fixed catalog)`);
   const voice = await runCase('live voice preview, cancellation, final transcript and search (speech service stub)', checkVoice, origin);
-  process.exitCode = passes === cases.length && voice ? 0 : 1;
+  // Use a fresh API instance for another scenario group so its shared test IP has a fresh request budget.
+  await web.close();
+  await api.close();
+  const plannerOrigin = await startFixture();
+  const planner = await runCase('planner asks for city and returns one event when selected', checkSingleChoice, plannerOrigin, true);
+  const familyWeekday = await runCase('family plan accepts an abbreviated weekday and follows the verified nearby date', checkFamilyWeekday, plannerOrigin, true);
+  const mapped = await runCase('planner saves and orders stops, warns about transfers, and enforces four-event limit (Yandex SDK stub)',
+    page => checkDayPlan(page, true), plannerOrigin, true);
+  const noKey = await runCase('planner offers a maps link without estimating time when no key is configured',
+    page => checkDayPlan(page, false), plannerOrigin, true);
+  process.exitCode = passes === cases.length && voice && planner && familyWeekday && mapped && noKey ? 0 : 1;
 } finally {
   await browser?.close();
   await web?.close();

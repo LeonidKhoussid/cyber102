@@ -5,12 +5,14 @@ import type { Pool } from 'pg';
 import { accountError, allowAccountOrigin, getSession, withAccountTransaction } from './accounts.ts';
 import type { AccountUser } from './accounts.ts';
 import type { createDiscovery } from './discover.ts';
+import type { CatalogStore } from './catalog.ts';
+import { initializeEventPlans, registerEventPlans } from './event-plans.ts';
 
 type ChatRow = { id: string; title: string | null; created_at: Date; updated_at: Date };
 type TurnRow = { request_id: string; message: string; response: DiscoveryResponse; created_at: Date | string };
 type ChatParams = { id: string };
 type TitleBody = { title?: unknown };
-type TurnBody = { message?: unknown; requestId?: unknown };
+type TurnBody = { message?: unknown; requestId?: unknown; planExperience?: unknown };
 
 const chatColumns = 'id, title, created_at, updated_at';
 const turnColumns = 'request_id, message, response, created_at';
@@ -36,6 +38,7 @@ export async function initializeChats(pool: Pool) {
       UNIQUE (chat_id, position)
     );
   `);
+  await initializeEventPlans(pool);
 }
 
 function publicChat(row: ChatRow) {
@@ -70,6 +73,7 @@ function userId(request: FastifyRequest) {
 export function registerChats(server: FastifyInstance, pool: Pool, options: {
   origin: string;
   discover: ReturnType<typeof createDiscovery>;
+  catalog: Pick<CatalogStore, 'getEvent'>;
 }) {
   const origin = new URL(options.origin).origin;
   server.register(async chats => {
@@ -81,6 +85,7 @@ export function registerChats(server: FastifyInstance, pool: Pool, options: {
       if (!account) return accountError(reply, 401, 'authentication_required', 'Войдите, чтобы открыть сохранённые чаты.');
       request.setDecorator('chatAccount', account);
     });
+    registerEventPlans(chats, pool, options.catalog, { userId, validUuid, chatNotFound });
 
     chats.get('/', async request => {
       const { rows } = await pool.query<ChatRow>(`
@@ -171,7 +176,7 @@ export function registerChats(server: FastifyInstance, pool: Pool, options: {
           SELECT response->'context' AS context FROM account_chat_turns
           WHERE chat_id = $1 ORDER BY position DESC LIMIT 1
         `, [id]);
-        const response = await options.discover(message, prior?.context);
+        const response = await options.discover(message, prior?.context, { planExperience: request.body?.planExperience === true });
         const { rows: [turn] } = await client.query<TurnRow>(`
           INSERT INTO account_chat_turns (chat_id, request_id, message, response)
           VALUES ($1, $2, $3, $4)

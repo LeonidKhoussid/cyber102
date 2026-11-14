@@ -73,7 +73,7 @@ export function createBotService(origin: string, token: string, fetcher: typeof 
       return json(await request('/api/v1/directories'));
     },
     async discover(message, context) {
-      return json(await request('/api/v1/discover', send('POST', { message, context })));
+      return json(await request('/api/v1/discover', send('POST', { message, context, planExperience: true })));
     },
     async subscribe(subscriber, subscription) {
       const response = await request(subscriptions, send('PUT', { subscriber, ...subscription }, true));

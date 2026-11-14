@@ -25,12 +25,15 @@ export type Directories = {
   categories: { id: Category; label: string }[];
 };
 export type QueryValues = Record<string, string | undefined>;
+export const dayPlanLimit = 4;
+export type PlanTransport = 'car' | 'transit' | 'walk' | 'bike' | 'taxi';
 
 export type DiscoveryContext = {
   city?: string; category?: Category; date?: string; period?: 'today' | 'tomorrow' | 'weekend' | 'week';
   fromDate?: string; untilDate?: string; venue?: string; language?: 'ba' | 'ru'; sortByDistance?: boolean;
   latestEnd?: string; earliestStart?: string; childAge?: number; child?: boolean; partySize?: number;
   preference?: string; awaitingPreference?: boolean;
+  planMode?: 'single' | 'day'; planCount?: number; transport?: PlanTransport;
   budget?: number; travelMinutes?: number; origin?: string; free?: boolean; cheaperThan?: number; referencePrice?: number; seenEventIds?: string[]; query?: string;
 };
 

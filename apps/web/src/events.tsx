@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { categories } from '@afisha/contracts';
 import type { CatalogEvent } from '@afisha/contracts';
 import { useData } from './http.ts';
@@ -40,6 +41,8 @@ export function EventTime({ event, detailed = false }: { event: CatalogEvent; de
   </>;
 }
 
+export const eventLocalDay = (event: CatalogEvent) => localDay.format(new Date(event.startsAt));
+
 export function Sources({ event, detailed = false }: { event: CatalogEvent; detailed?: boolean }) {
   const sources = event.sources.flatMap(source => {
     const url = publicLink(source.url);
@@ -55,23 +58,24 @@ export function Sources({ event, detailed = false }: { event: CatalogEvent; deta
   </div>;
 }
 
-export function EventCard({ event, reasons, embedded }: { event: CatalogEvent; reasons?: string[]; embedded?: boolean }) {
+export function EventCard({ event, reasons, embedded, action }: { event: CatalogEvent; reasons?: string[]; embedded?: boolean; action?: ReactNode }) {
   const ticket = publicLink(event.ticketUrl);
   return <article className="event-card">
     <div className="event-heading">
-      <div>
-        <p className="event-category">{categories[event.category]}{event.ageLimit !== undefined && <span>{event.ageLimit}+</span>}</p>
-        <h3><a href={`/events/${encodeURIComponent(event.id)}`} target={embedded ? '_blank' : undefined} rel={embedded ? 'noreferrer' : undefined}>{event.title} <Icon name="diagonal" /></a></h3>
-      </div>
+      <h3><a href={`/events/${encodeURIComponent(event.id)}`} target={embedded ? '_blank' : undefined} rel={embedded ? 'noreferrer' : undefined}>{event.title} <Icon name="diagonal" /></a></h3>
       <span className="event-price">{price(event)}</span>
     </div>
     <div className="event-facts">
       <div><Icon name="calendar" /><span><EventTime event={event} /></span></div>
       <div><Icon name="pin" /><span>{event.city} · {event.venue}</span></div>
+      <div className="event-category">{categories[event.category]}{event.ageLimit !== undefined && <span>{event.ageLimit}+</span>}</div>
     </div>
     {reasons && reasons.length > 0 && <ul className="reasons">{reasons.map(reason => <li key={reason}>{reason}</li>)}</ul>}
     {reasons && <Sources event={event} />}
-    {reasons && ticket && <a className="text-link ticket-link" href={ticket} target="_blank" rel="noreferrer">К билетам <Icon name="diagonal" /></a>}
+    {(action || (reasons && ticket)) && <div className="event-actions">
+      {reasons && ticket && <a className="text-link ticket-link" href={ticket} target="_blank" rel="noreferrer">К билетам <Icon name="diagonal" /></a>}
+      {action}
+    </div>}
   </article>;
 }
 
@@ -83,13 +87,13 @@ export function Detail({ id }: { id: string }) {
   return <Shell><main id="main" className="inner detail">
     <a className="back-link" href="/catalog"><Icon name="left" /> Все события</a>
     {error ? <Notice text={error} retry={retry} /> : event ? <article>
-      <p className="event-category">{categories[event.category]}{event.ageLimit !== undefined && <span>{event.ageLimit}+</span>}</p>
       <h1>{event.title}</h1>
       {event.status === 'cancelled' && <p className="notice">Событие отменено</p>}
       <div className="detail-layout">
         <dl className="detail-facts">
           <div><dt>Когда</dt><dd><EventTime event={event} detailed /></dd></div>
           <div><dt>Где</dt><dd>{event.city} · {event.venue}{event.address && <><br />{event.address}</>}</dd></div>
+          <div><dt>Категория</dt><dd>{categories[event.category]}{event.ageLimit !== undefined && ` · ${event.ageLimit}+`}</dd></div>
           <div><dt>Вход</dt><dd>{price(event)}</dd></div>
           {event.language && <div><dt>Язык</dt><dd>{event.language}</dd></div>}
         </dl>

@@ -284,7 +284,7 @@ test('sends free text and follow-ups to discovery and opens a matched card', asy
   backend.discover(() => response);
   const telegram = harness(backend);
   await telegram.message('Концерт на троих в Уфе до 2000 рублей');
-  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Концерт на троих в Уфе до 2000 рублей' });
+  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Концерт на троих в Уфе до 2000 рублей', planExperience: true });
   assert.equal(backend.requests.at(-1)?.authorization, null);
   assert.match(telegram.latest().text, /Бюджет: 2000 ₽/);
   assert.match(telegram.latest().text, /Подходит по бюджету/);
@@ -296,12 +296,12 @@ test('sends free text and follow-ups to discovery and opens a matched card', asy
 
   backend.discover(() => ({ ...response, status: 'no_results', message: 'Дешевле событий нет.', events: [], suggestions: [] }));
   await telegram.click('Подешевле');
-  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Подешевле', context: response.context });
+  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Подешевле', context: response.context, planExperience: true });
   assert.match(telegram.latest().text, /Дешевле событий нет/);
   await telegram.message('2026-11-23');
-  assert.deepEqual(backend.requests.at(-1)?.body, { message: '2026-11-23', context: response.context });
+  assert.deepEqual(backend.requests.at(-1)?.body, { message: '2026-11-23', context: response.context, planExperience: true });
   await telegram.message('Что сегодня?', 2);
-  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Что сегодня?' });
+  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Что сегодня?', planExperience: true });
 });
 
 test('reports backend failures and keeps context for a retry', async () => {
@@ -317,5 +317,5 @@ test('reports backend failures and keeps context for a retry', async () => {
   assert.match(telegram.latest().text, /временно недоступна/);
   assert.equal(telegram.errors(), 1);
   await telegram.message('В выходные');
-  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'В выходные', context: { city: 'Уфа' } });
+  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'В выходные', context: { city: 'Уфа' }, planExperience: true });
 });

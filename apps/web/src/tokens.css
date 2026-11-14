@@ -1,26 +1,31 @@
-/* Hallmark · modern-minimal · ink blue and lavender · single-focus question workspace
- * N9 edge-aligned navigation · Ft1 quiet masthead · critique P5 H5 E4 S4 R5 V5
- */
 @font-face {
-  font-family: 'Golos Text';
+  font-family: Manrope;
   font-style: normal;
-  font-weight: 400 900;
+  font-weight: 200 800;
   font-display: swap;
-  src: url('@fontsource-variable/golos-text/files/golos-text-cyrillic-wght-normal.woff2') format('woff2');
+  src: url('@fontsource-variable/manrope/files/manrope-cyrillic-ext-wght-normal.woff2') format('woff2');
+  unicode-range: U+0460-052F,U+1C80-1C8A,U+20B4,U+2DE0-2DFF,U+A640-A69F,U+FE2E-FE2F;
+}
+@font-face {
+  font-family: Manrope;
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url('@fontsource-variable/manrope/files/manrope-cyrillic-wght-normal.woff2') format('woff2');
   unicode-range: U+0301,U+0400-045F,U+0490-0491,U+04B0-04B1,U+2116;
 }
 @font-face {
-  font-family: 'Golos Text';
+  font-family: Manrope;
   font-style: normal;
-  font-weight: 400 900;
+  font-weight: 200 800;
   font-display: swap;
-  src: url('@fontsource-variable/golos-text/files/golos-text-latin-wght-normal.woff2') format('woff2');
+  src: url('@fontsource-variable/manrope/files/manrope-latin-wght-normal.woff2') format('woff2');
   unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+20BD,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD;
 }
 
 :root {
   color-scheme: dark;
-  --font-interface: 'Golos Text', system-ui, sans-serif;
+  --font-interface: Manrope, system-ui, sans-serif;
   --color-bg: #0e1019;
   --color-surface: #171a28;
   --color-raised: #1f2235;
@@ -34,9 +39,9 @@
   --color-accent-strong: #ded9ff;
   --color-accent-ink: #17132f;
   --color-accent-tint: #252642;
-  --color-glow: #34305c;
   --color-warning: #ffd2a4;
   --color-shadow: #06070d70;
+  --color-scrim: #06070dc7;
   --space-gutter: clamp(1rem, 4vw, 3.5rem);
   --space-tiny: .375rem;
   --space-small: .625rem;
@@ -49,11 +54,31 @@
   --text-lg: 1.125rem;
   --text-xl: 1.375rem;
   --text-title: clamp(2.25rem, 5vw, 4rem);
-  --text-hero: clamp(3.375rem, 7.7vw, 6.5rem);
+  --text-hero: clamp(2.625rem, 7.5vw, 5.5rem);
   --radius-sm: .65rem;
   --radius-md: .95rem;
   --radius-lg: 1.5rem;
   --width-conversation: 45rem;
   --width-inner: 58rem;
   --duration-fast: 150ms;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+  --color-bg: #f5f5fb;
+  --color-surface: #fdfcff;
+  --color-raised: #eeedf8;
+  --color-question: #e6e4f7;
+  --color-border: #d8d7e7;
+  --color-border-strong: #8887a2;
+  --color-text: #212237;
+  --color-muted: #4a4d68;
+  --color-quiet: #585b76;
+  --color-accent: #51448e;
+  --color-accent-strong: #403575;
+  --color-accent-ink: #fdfcff;
+  --color-accent-tint: #eae6fa;
+  --color-warning: #8d3f18;
+  --color-shadow: #2122371a;
+  --color-scrim: #21223780;
 }

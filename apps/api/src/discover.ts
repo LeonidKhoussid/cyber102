@@ -1,9 +1,9 @@
-import { categories } from '@afisha/contracts';
+import { categories, dayPlanLimit } from '@afisha/contracts';
 import type { CatalogEvent, DiscoveryContext, DiscoveryResponse } from '@afisha/contracts';
 import { normalizeText } from './catalog.ts';
 import type { CatalogStore, EventFilters } from './catalog.ts';
 import { datePeriod, localDate, localDay } from './filters.ts';
-import { cleanContext, constraintIssue, isSearchReset, maximumAge, mergeIntent, readAgeReply, readIntent } from './intent.ts';
+import { cleanContext, constraintIssue, isSearchReset, maximumAge, mergeIntent, readAgeReply, readIntent, readPlanRequest } from './intent.ts';
 import type { Point, TravelEstimate } from './routing.ts';
 
 type Interpret = (message: string, context: DiscoveryContext, cities: string[], date: string) => Promise<DiscoveryContext>;
@@ -19,6 +19,31 @@ const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Yekaterinburg', 
 const money = new Intl.NumberFormat('ru-RU');
 const periods = { today: 'Сегодня', tomorrow: 'Завтра', weekend: 'Ближайшие выходные', week: 'Ближайшие 7 дней' };
 const languages = { ru: 'Русский', ba: 'Башкирский' };
+const transportLabels = { car: 'На машине', transit: 'На общественном транспорте', walk: 'Пешком', bike: 'На велосипеде', taxi: 'На такси' };
+const planSuggestions = ['Одно событие', 'Несколько событий'];
+const askPlanMode = 'Ищем одно событие или несколько на один день?';
+const askPlanOrigin = 'Откуда начнётся маршрут? Укажите адрес, известную площадку или координаты.';
+
+function dayShortlist<T>(options: T[], eventFor: (option: T) => CatalogEvent, limit: number, spread: boolean): T[] {
+  if (!spread) return options.slice(0, limit);
+  const buckets = new Map<string, T[]>();
+  for (const option of options) {
+    const event = eventFor(option);
+    const hour = Number(time.format(new Date(event.startsAt)).slice(0, 2));
+    const slot = `${event.category}:${hour < 12 ? 'morning' : hour < 17 ? 'afternoon' : 'evening'}`;
+    const bucket = buckets.get(slot);
+    if (bucket) bucket.push(option);
+    else buckets.set(slot, [option]);
+  }
+  const selected: T[] = [];
+  for (let index = 0; selected.length < Math.min(options.length, limit); index++) {
+    for (const bucket of buckets.values()) {
+      if (index < bucket.length) selected.push(bucket[index]);
+      if (selected.length === limit) return selected;
+    }
+  }
+  return selected;
+}
 
 function labelDate(date: string) {
   return shortDate.format(new Date(date + 'T12:00:00+05:00'));
@@ -38,6 +63,8 @@ function constraints(context: DiscoveryContext) {
     if (value) labels.push({ label, value });
   }
   show('Город', context.city);
+  show('Подборка', context.planMode === 'single' ? 'Одно событие' : context.planMode === 'day'
+    ? (context.planCount ? `${context.planCount} события на день` : 'Несколько событий на день') : undefined);
   show('Площадка', context.venue);
   show('Когда', context.date ? labelDate(context.date) : context.period ? periods[context.period] :
     context.fromDate && context.untilDate ? `${labelDate(context.fromDate)} — ${labelDate(context.untilDate)}` :
@@ -47,13 +74,14 @@ function constraints(context: DiscoveryContext) {
   show('Возраст', context.childAge === undefined ? context.child ? 'Уточняется' : undefined : String(context.childAge));
   show('Участники', context.partySize ? String(context.partySize) : undefined);
   show('Цена', context.cheaperThan !== undefined ? `Меньше ${money.format(context.cheaperThan)} ₽` : undefined);
-  show('Бюджет', context.budget === undefined ? undefined : context.budget === 0 ? 'Бесплатно' :
+  show(context.planMode === 'day' ? 'Бюджет на событие' : 'Бюджет', context.budget === undefined ? undefined : context.budget === 0 ? 'Бесплатно' :
     `До ${money.format(context.budget)} ₽${context.partySize ? ' на всех' : ' за билет'}`);
   show('Начало', context.earliestStart && `С ${context.earliestStart}`);
   show('Окончание', context.latestEnd && `До ${context.latestEnd}`);
   show('Дорога', context.travelMinutes && `До ${context.travelMinutes} мин` || undefined);
   show('Сортировка', context.sortByDistance ? 'Сначала ближе' : undefined);
   show('Откуда', context.origin);
+  show('Транспорт', context.transport && transportLabels[context.transport]);
   show('Интерес', context.query);
   show('Предпочтение', context.preference);
   return labels;
@@ -105,7 +133,7 @@ function explain(event: CatalogEvent, context: DiscoveryContext, now: Date, trav
     reasons.push(cost === 0 ? 'Есть бесплатный вход' : `${isStartingPrice ? 'От ' : ''}${money.format(cost)} ₽${group}`);
   }
   if (context.latestEnd && event.endsAt) reasons.push(`Закончится в ${time.format(new Date(event.endsAt))}`);
-  if (travel !== undefined) reasons.push(`Около ${travel} мин на машине`);
+  if (travel !== undefined) reasons.push(`Около ${travel} мин ${context.transport === 'taxi' ? 'на такси' : 'на машине'}`);
   return reasons;
 }
 
@@ -151,7 +179,7 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
     }
   }
 
-  return async function discover(message: string, prior?: unknown): Promise<DiscoveryResponse> {
+  return async function discover(message: string, prior?: unknown, { planExperience = false }: { planExperience?: boolean } = {}): Promise<DiscoveryResponse> {
     const now = clock();
     const previous = isSearchReset(message) ? {} : cleanContext(prior);
     const { cities, venues } = await catalog.directories();
@@ -169,11 +197,15 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
         ? 'Я помогаю найти культурные события в Башкортостане. Могу подобрать афишу на нужный день.' : undefined;
     if (redirect) return { status: 'clarify', message: redirect, suggestions: [], events: [], context: previous, constraints: constraints(previous) };
     const ageReply = previous.child && previous.childAge === undefined ? readAgeReply(message) : undefined;
+    const planRequest = readPlanRequest(message, planExperience && !previous.planMode && ageReply === undefined);
+    const planning = planExperience || Boolean(previous.planMode || planRequest.mode);
     const issue = ageReply !== undefined && (!Number.isInteger(ageReply) || ageReply < 0 || ageReply > maximumAge)
       ? 'Укажите возраст числом от 0 до 120.'
-      : constraintIssue(message);
+      : planRequest.count !== undefined && (planRequest.count < 1 || planRequest.count > dayPlanLimit)
+        ? 'На один день можно выбрать от одного до четырёх событий. Сколько событий ищем?'
+        : constraintIssue(message, planning);
     if (issue) return { status: 'clarify', message: issue, suggestions: [], events: [], context: previous, constraints: constraints(previous) };
-    const local = ageReply === undefined ? readIntent(message, previous, cities, now, venues) : { ...previous, childAge: ageReply };
+    const local = ageReply === undefined ? readIntent(message, previous, cities, now, venues, planning) : { ...previous, childAge: ageReply };
     if (ageReply !== undefined && /^\d+$/u.test(local.query ?? '')) delete local.query;
     let context = local;
     let modelUnavailable = false;
@@ -181,23 +213,33 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
     const resetOnly = /^(?:новый поиск|начнем заново|сначала)$/u.test(words);
     const cityOnly = local.city && (words === normalizeText(local.city) || words === 'город ' + normalizeText(local.city));
     const preferenceReply = previous.awaitingPreference && local.preference !== previous.preference;
-    if (interpret && ageReply === undefined && !relax && !resetOnly && !cityOnly && !preferenceReply) {
+    const coordinateReply = /^\s*-?\d{1,2}\.\d+\s*[,;]\s*-?\d{1,3}\.\d+\s*$/.test(message);
+    const venueReply = venues.some(venue => normalizeText(venue.name) === words &&
+      (!previous.city || normalizeText(venue.city) === normalizeText(previous.city)));
+    const originPending = previous.planMode === 'day' && previous.city && previous.date && previous.transport && !previous.origin;
+    const addressReply = originPending && message.trim().length <= 120 && local.city === previous.city &&
+      local.date === previous.date && local.earliestStart === previous.earliestStart && local.latestEnd === previous.latestEnd &&
+      local.budget === previous.budget && local.transport === previous.transport &&
+      /^(?:(?:ул(?:ица)?|проспект|пр-т|переулок|пер\.|бульвар|шоссе|площадь)\s*\.? +[^!?]+|[\p{L} -]+[ ,]\s*\d+(?:[\p{L}]|\/\d+)?(?:\s+к\.?\s*\d+)?)$/iu.test(message.trim());
+    if (ageReply === undefined && !local.origin && (originPending || previous.travelMinutes || previous.sortByDistance) &&
+        (coordinateReply || venueReply || addressReply || /^от (?!\d+ (?:руб|р)(?:\s|$))/u.test(words))) {
+      local.origin = message.trim().replace(/^от\s+/iu, '');
+      local.query = previous.query;
+      local.venue = previous.venue;
+    }
+    const planningReply = planning && (local.planMode !== previous.planMode || local.planCount !== previous.planCount ||
+      local.transport !== previous.transport || local.origin !== previous.origin);
+    const awaitingPlanInput = planning && (!local.city || !local.planMode || local.planMode === 'day' && (!local.date || !local.transport));
+    if (interpret && ageReply === undefined && !relax && !resetOnly && !cityOnly && !preferenceReply &&
+        (!(planningReply || awaitingPlanInput) || words.length > 35 && local.origin === previous.origin)) {
       try {
         const interpreted = await interpret(message, previous, cities, localDate(now));
-        context = mergeIntent(message, previous, local, interpreted, cities, venues, now);
+        context = mergeIntent(message, previous, local, interpreted, cities, venues, now, planning);
       } catch {
         onInterpretFailure?.();
         modelUnavailable = true;
         context = local;
       }
-    }
-    const coordinateReply = /^\s*-?\d{1,2}\.\d+\s*[,;]\s*-?\d{1,3}\.\d+\s*$/.test(message);
-    const venueReply = venues.some(venue => normalizeText(venue.name) === words);
-    if ((previous.travelMinutes || previous.sortByDistance) && !previous.origin && !context.origin &&
-        (coordinateReply || venueReply || /^от (?!\d+ (?:руб|р)(?:\s|$))/u.test(words))) {
-      context.origin = message.trim().replace(/^от\s+/iu, '');
-      context.query = previous.query;
-      context.venue = previous.venue;
     }
     if (closer) context.sortByDistance = true;
     if (/^(?:а )?(?:подешевле|дешевле)(?:\s|$)/u.test(words) && context.budget !== 0) {
@@ -206,16 +248,41 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
 
     const more = /^(?:а )?(?:что |что-нибудь |есть )?еще(?: варианты| что| есть)?$/u.test(words);
     const seen = new Set(more ? previous.seenEventIds : []);
-    delete context.seenEventIds;
     const respond = (status: DiscoveryResponse['status'], message: string, suggestions: string[] = [], events: Match[] = []): DiscoveryResponse =>
       ({ status, message: modelUnavailable ? `ИИ временно недоступен. Использую обычный поиск. ${message}` : message, suggestions, events, context, constraints: constraints(context) });
+    const askCity = 'В каком городе ищем?';
+    const citySuggestions = cities.slice(0, 3).map(city => 'Город: ' + city);
+    const dayBudget = context.planMode === 'day' && (context.budget !== undefined || /\d/u.test(words)) &&
+      /(?:^| )(?:бюджет на (?:весь )?день|на весь (?:день|план|маршрут)|на все (?:события|мероприятия|билеты)|на вс[ею] (?:программу|подборку)|общий бюджет|всего на день)(?= |$)/u.test(words);
+    if (dayBudget) {
+      context.budget = previous.budget;
+      context.free = previous.free;
+      context.cheaperThan = previous.cheaperThan;
+    }
+    if (planning && (!context.city || !context.planMode)) {
+      return respond('clarify', [!context.city && askCity, !context.planMode && askPlanMode].filter(Boolean).join(' '),
+        [...(!context.planMode ? planSuggestions : []), ...(!context.city ? citySuggestions : [])]);
+    }
+    if (dayBudget) return respond('clarify', 'Какой предельный бюджет на одно событие? Общая стоимость дня зависит от выбранных билетов.',
+      ['Только бесплатные', 'Любая цена']);
     if (/^(?:а )?(?:подешевле|дешевле)(?:\s|$)/u.test(words) && context.cheaperThan === undefined) {
       return respond('clarify', context.budget === 0 ? 'Уже ищу только бесплатные события. Можно изменить другие условия.'
         : 'В предыдущей подборке нет подтверждённой цены для сравнения. Какой максимальный бюджет указать?', ['Только бесплатные']);
     }
     if (context.city && !cities.some(city => normalizeText(city) === normalizeText(context.city ?? ''))) {
       return respond('no_results', `В каталоге пока нет предстоящих событий для города «${context.city}». Поэтому я не могу подобрать варианты по этим условиям.`,
-        cities.slice(0, 3).map(city => 'Город: ' + city));
+        citySuggestions);
+    }
+    const dayPlan = context.planMode === 'day';
+    const spreadDay = dayPlan && !context.query && !context.preference && context.cheaperThan === undefined && !context.sortByDistance;
+    if (dayPlan && !context.date) {
+      if (context.fromDate && context.fromDate === context.untilDate) context.date = context.fromDate;
+      else return respond('clarify', 'На какой именно день составить план?', context.period === 'weekend'
+        ? ['В субботу', 'В воскресенье'] : ['Сегодня', 'Завтра']);
+    }
+    const routeNeeded = context.sortByDistance || context.travelMinutes !== undefined;
+    if ((dayPlan || (planning && routeNeeded)) && !context.transport) {
+      return respond('clarify', 'На каком транспорте планируете передвигаться?', Object.values(transportLabels));
     }
     const blockers = new Map<Rejection, number>();
     const record = (reason: Rejection) => blockers.set(reason, (blockers.get(reason) ?? 0) + 1);
@@ -224,6 +291,28 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
     const shownTitles = new Set<string>();
     const ranker = !modelUnavailable && !context.query && context.cheaperThan === undefined && !context.sortByDistance ? recommend : undefined;
     const candidateLimit = ranker ? 25 : 5;
+    async function rank(matches: Match[], limit: number) {
+      const fallback = dayShortlist(matches, match => match.event, limit, spreadDay);
+      if (!ranker || matches.length < 2) return { selected: fallback, ranked: false };
+      try {
+        const rankingMessage = planning && context.origin && context.origin !== previous.origin ? (context.preference ?? '') : message;
+        const pool = dayShortlist(matches, match => match.event, candidateLimit, spreadDay);
+        const result = await ranker(rankingMessage, context, pool.map(({ event }) => event));
+        const byId = new Map(matches.map(match => [match.event.id, match]));
+        const ranked = result.picks.flatMap(({ id, reason }) => {
+          const match = byId.get(id);
+          if (!match) return [];
+          byId.delete(id);
+          return [{ ...match, reasons: reason ? [reason, ...match.reasons] : match.reasons }];
+        });
+        const selected = ranked.length ? dayShortlist(dayPlan ? [...ranked, ...byId.values()] : ranked, match => match.event, limit, spreadDay) : fallback;
+        return { selected, ranked: ranked.length > 0, question: result.question };
+      } catch {
+        onInterpretFailure?.();
+        modelUnavailable = true;
+        return { selected: fallback, ranked: false };
+      }
+    }
     const diversifyFilms = !context.query && !context.category && context.cheaperThan === undefined;
     const travelCandidates: CatalogEvent[] = [];
     const requiredDetails = [
@@ -236,12 +325,12 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
     let checkedOnlySample = false;
     let found = false;
     const askOrigin = 'Откуда вы поедете? Укажите название площадки или её адрес из афиши, либо координаты.';
-    const routeNeeded = context.sortByDistance || context.travelMinutes !== undefined;
     const dated = context.date || context.period || context.fromDate || context.untilDate;
     const sort = context.cheaperThan !== undefined ? 'price' : context.query ? 'relevance' :
-      !context.category && context.childAge !== undefined && context.childAge <= 12 ? 'family' :
+      !context.category && (context.preference === 'Семейный досуг' || context.childAge !== undefined && context.childAge <= 12) ? 'family' :
         dated && !context.category ? 'sessions' : undefined;
     for await (const event of searchCandidates(context, now, true, sort)) {
+      if (dayPlan && (localDate(new Date(event.startsAt)) !== context.date || Date.parse(event.startsAt) < now.getTime())) continue;
       found = true;
       if (seen.has(event.id)) continue;
       const blocked = checkEvent(event, context);
@@ -256,37 +345,48 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
       }
       if (routeNeeded) {
         travelCandidates.push(event);
-        if (travelCandidates.length > 25) {
+        if (!spreadDay && travelCandidates.length > 25) {
           travelCandidates.pop();
           checkedOnlySample = true;
           break;
         }
       } else {
         const match = { event, reasons: explain(event, context, now) };
-        if (ranker || (diversifyFilms && event.category === 'cinema')) {
+        if (dayPlan || ranker || (diversifyFilms && event.category === 'cinema')) {
           const title = normalizeText(event.title) + '|' + event.city;
           if (shownTitles.has(title)) {
-            if (repeated.length < 5) repeated.push(match);
+            if (!dayPlan && repeated.length < 5) repeated.push(match);
             continue;
           }
           shownTitles.add(title);
         }
         matches.push(match);
-        if (matches.length === candidateLimit) break;
+        if (!spreadDay && matches.length === candidateLimit) break;
       }
     }
+    if (spreadDay && !routeNeeded) matches.splice(0, matches.length, ...dayShortlist(matches, match => match.event, candidateLimit, true));
+    if (spreadDay && travelCandidates.length > 25) {
+      travelCandidates.splice(0, travelCandidates.length, ...dayShortlist(travelCandidates, event => event, 25, true));
+      checkedOnlySample = true;
+    }
     if (travelCandidates.length) {
-      const routePreview = (events: CatalogEvent[], next?: string): DiscoveryResponse => {
+      const routePreview = async (events: CatalogEvent[], next?: string): Promise<DiscoveryResponse> => {
         const day = context.date ? labelDate(context.date) : undefined;
         const limit = context.travelMinutes === undefined ? '' : ` Лимит в ${context.travelMinutes} мин пока не подтверждён.`;
         const opening = day ? `${day[0].toUpperCase()}${day.slice(1)} — есть варианты по остальным условиям.` : 'Вот варианты по остальным условиям.';
+        const unverified = events.map(event => ({ event, reasons: [...explain(event, context, now), 'Время в пути не проверено'] }));
+        const alternatives = dayPlan ? (await rank(unverified, 5)).selected : unverified.slice(0, 5);
+        if (dayPlan) context.seenEventIds = [...seen, ...alternatives.map(({ event }) => event.id)].slice(-100);
         return {
-          ...respond('clarify', `${opening} Сейчас я не могу проверить время в пути.${limit}${next ? ' ' + next : ''}`, ['Без учёта дороги']),
-          alternatives: events.slice(0, 5).map(event => ({ event, reasons: [...explain(event, context, now), 'Время в пути не проверено'] })),
+          ...respond('clarify', `${opening} Сейчас я не могу проверить время в пути.${limit}${next ? ' ' + next : ''}`,
+            [...(dayPlan ? ['А что ещё?'] : []), 'Без учёта дороги']),
+          alternatives,
         };
       };
-      if (!travel) return routePreview(travelCandidates);
-      if (!context.origin) return routePreview(travelCandidates, askOrigin);
+      if (!travel || (planning && context.transport !== 'car' && context.transport !== 'taxi')) {
+        return routePreview(travelCandidates, dayPlan && !context.origin ? askPlanOrigin : undefined);
+      }
+      if (!context.origin) return routePreview(travelCandidates, dayPlan ? askPlanOrigin : askOrigin);
       let origin = originPoint(context.origin, []);
       if (!origin) {
         for await (const venue of searchCandidates({ city: context.city }, now, false)) {
@@ -305,16 +405,14 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
         if (minutes === undefined) record('unknownTravel');
         else if (context.travelMinutes !== undefined && minutes > context.travelMinutes) record('travel');
         else matches.push({ event, reasons: explain(event, context, now, minutes) });
-        if (matches.length === candidateLimit) break;
+        if (!spreadDay && matches.length === candidateLimit) break;
       }
       const unverified = travelCandidates.filter(event => !estimates.has(event.id));
       if (!matches.length && unverified.length) return routePreview(unverified);
     }
     matches.push(...repeated.slice(0, candidateLimit - matches.length));
     if (matches.length) {
-      let selected = matches.slice(0, 5);
-      let question: string | undefined;
-      let recommendationShown = false;
+      const shownLimit = context.planMode === 'single' ? 1 : 5;
       let matchingCities = [...new Set(matches.map(({ event }) => event.city))];
       if (recommend && !context.query && !context.city && !routeNeeded && !/любой город|в любом городе|вся республика/u.test(words)) {
         const eligible = await Promise.all(cities.map(async city => matchingCities.includes(city) ||
@@ -324,24 +422,9 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
           return respond('clarify', 'В каком городе ищем? От этого зависит подборка.', matchingCities.slice(0, 3).map(city => 'Город: ' + city));
         }
       }
-      if (ranker && matches.length > 1) {
-        try {
-          const result = await ranker(message, context, matches.map(({ event }) => event));
-          const byId = new Map(matches.map(match => [match.event.id, match]));
-          const ranked = result.picks.flatMap(({ id, reason }) => {
-            const match = byId.get(id);
-            if (!match) return [];
-            byId.delete(id);
-            return [{ ...match, reasons: reason ? [reason, ...match.reasons] : match.reasons }];
-          });
-          if (ranked.length) selected = ranked.slice(0, 5);
-          recommendationShown = ranked.length > 0;
-          if (!context.preference && !previous.awaitingPreference && !more && matchingCities.length === 1) question = result.question;
-        } catch {
-          onInterpretFailure?.();
-          modelUnavailable = true;
-        }
-      }
+      const { selected, ranked: recommendationShown, question: suggestedQuestion } = await rank(matches, shownLimit);
+      const question = !context.preference && !previous.awaitingPreference && !more && matchingCities.length === 1 && !(dayPlan && !context.origin)
+        ? suggestedQuestion : undefined;
       if (question) context.awaitingPreference = true;
       context.seenEventIds = [...seen, ...selected.map(({ event }) => event.id)].slice(-100);
       const prices = selected.map(({ event }) => totalCost(event, context)).filter((price): price is number => price !== undefined);
@@ -350,10 +433,14 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
         ? 'Показал ближайшие события среди 25 вариантов, для которых проверял дорогу.'
         : recommendationShown ? `Я бы начал с «${selected[0].event.title}».`
           : selected.length === 1 ? 'Нашёл подходящее событие.' : 'Вот что подходит по вашим условиям.';
-      return respond('matches', question ? `${summary} ${question}` : summary,
+      const nextQuestion = dayPlan && !context.origin ? askPlanOrigin : question;
+      const planSummary = dayPlan && selected.length === 1 && !more
+        ? 'По этим условиям пока есть только одно событие. Можно изменить условия и найти другие варианты.' : summary;
+      return respond('matches', nextQuestion ? `${planSummary} ${nextQuestion}` : planSummary,
         ['А что ещё?', ...(context.referencePrice ? ['А подешевле?'] : []),
           ...(!context.date && context.period !== 'weekend' ? ['А на выходных?'] : [])], selected);
     }
+    delete context.seenEventIds;
     if (more && found && !checkedOnlySample) {
       context.seenEventIds = [...seen];
       return respond('no_results', 'По этим условиям больше нет подтверждённых вариантов.');
@@ -362,12 +449,15 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
     async function firstAlternative(filters: DiscoveryContext, includeDates: boolean) {
       if (filters.travelMinutes || filters.sortByDistance || (filters.child && filters.childAge === undefined)) return;
       for await (const event of searchCandidates(filters, now, includeDates)) {
+        const eventDate = localDate(new Date(event.startsAt));
+        if (dayPlan && (Date.parse(event.startsAt) < now.getTime() || (includeDates ? eventDate !== context.date : eventDate === context.date))) continue;
         if (!seen.has(event.id) && checkEvent(event, filters).length === 0 &&
-            (includeDates || Date.parse(event.startsAt) >= now.getTime())) return event;
+            (includeDates || (Date.parse(event.startsAt) >= now.getTime() && eventDate !== context.date))) return event;
       }
     }
     // Only suggest another day when every other requested condition is confirmed.
     const alternative = dated ? await firstAlternative(context, false) : undefined;
+    const alternativeSuggestion = alternative ? [dayPlan ? `А ${dayAndMonth.format(new Date(alternative.startsAt))}?` : 'В любой день'] : [];
     const alternativeText = alternative ? ` Ближайший подходящий вариант в другой день — «${alternative.title}»: ${shortDate.format(new Date(alternative.startsAt))}, ${time.format(new Date(alternative.startsAt))}.` : '';
     const nearbyDate = dated && routeNeeded && !travelCandidates.length ? await firstAlternative({
       ...context, travelMinutes: undefined, origin: undefined, sortByDistance: undefined,
@@ -395,7 +485,7 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
       const summary = checkedOnlySample ? 'Среди 25 проверенных вариантов совпадений нет.' : coverage
         ? 'Подтверждённых совпадений пока нет.' : 'По всем условиям совпадений нет.';
       return respond('no_results', summary + coverage + ' ' + reasons + alternativeText + nearbyText,
-        [...(alternative ? ['В любой день'] : []), ...nearbySuggestion, ...suggestions].slice(0, 3));
+        [...alternativeSuggestion, ...nearbySuggestion, ...suggestions].slice(0, 3));
     }
     const missingCategory = context.category && !(await catalog.search({ city: context.city, category: context.category, limit: 1 })).total
       ? context.category : undefined;
@@ -405,7 +495,7 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
       context.venue && firstAlternative({ ...context, venue: undefined }, true),
     ]);
     const suggestions = [
-      ...(alternative ? ['В любой день'] : []),
+      ...alternativeSuggestion,
       ...nearbySuggestion,
       ...(widerTopic ? ['Без темы'] : []),
       ...(widerCategory ? ['Любая категория'] : []),
@@ -413,6 +503,8 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
     ];
     const reason = missingCategory
       ? `В каталоге нет предстоящих событий по категории «${categories[missingCategory]}»${context.city ? ` в городе «${context.city}»` : ''}.`
+      : dayPlan && context.date && context.city && !context.query && !context.category && !context.venue
+        ? `На ${labelDate(context.date)} в городе «${context.city}» в каталоге нет предстоящих событий.`
       : dated ? 'Нет событий по вашему запросу на эти даты в каталоге.'
         : 'В каталоге пока нет подходящих событий по этому запросу.';
     const widerText = widerTopic ? ' Если убрать тему, есть события по остальным условиям.'

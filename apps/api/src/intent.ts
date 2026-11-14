@@ -1,4 +1,4 @@
-import { categories } from '@afisha/contracts';
+import { categories, dayPlanLimit } from '@afisha/contracts';
 import type { DiscoveryContext } from '@afisha/contracts';
 import { isLocalDate, normalizeText } from './catalog.ts';
 import { localDate, localDay } from './filters.ts';
@@ -26,7 +26,37 @@ const categoryPatterns = {
   cinema: /(?:^| )(?:кино[а-я]*|фильм[а-я]*|мультфильм[а-я]*|мультик[а-я]*|мультсеанс[а-я]*)(?= |$)/u,
   tour: /экскурси/u,
 };
-const weekdays = ['воскресенье', 'понедельник', 'вторник', 'среду', 'четверг', 'пятницу', 'субботу'];
+const weekdays = [
+  ['воскресенье', 'вс', 'вск'], ['понедельник', 'пн', 'пон'], ['вторник', 'вт'],
+  ['среду', 'среда', 'ср'], ['четверг', 'чт'], ['пятницу', 'пятница', 'пт'], ['субботу', 'суббота', 'сб', 'суб'],
+];
+const weekdayQualifier = '(?:ближайши[йеую]|следующи[йеую]|этот|эту|это)';
+const weekdayReply = new RegExp(`^(?:а )?(?:на |в )?(?:${weekdayQualifier} )?(.+)$`, 'u');
+const shortWeekdays = weekdays.flat().filter(day => day.length <= 3).join('|');
+const shortWeekdayPhrase = new RegExp(`(?:^| )(?:в|на) (?:${weekdayQualifier} )?((?:${shortWeekdays})(?: (?:и|или|либо) (?:в |на )?(?:${shortWeekdays}))*)(?= |$)`, 'gu');
+const familyOuting = /^(?:я |мы )?(?:хочу|хотим|планирую|планируем) (?:провести (?:весь )?день|погулять|отдохнуть|(?:куда-нибудь |куда нибудь )?сходить) (?:вместе )?с семь[еь]+й$/u;
+
+function weekdayChoices(words: string): string[] {
+  return (weekdayReply.exec(words)?.[1] ?? '').split(/ (?:и|или|либо) /u).map(choice => choice.replace(/^(?:в|на) /u, ''));
+}
+
+function mentionedWeekdays(words: string): number[] {
+  const choices = new Set(weekdayChoices(words));
+  for (const [, phrase] of words.matchAll(shortWeekdayPhrase)) {
+    for (const choice of weekdayChoices(phrase)) choices.add(choice);
+  }
+  return weekdays.flatMap((forms, index) => {
+    const [full, ...aliases] = forms;
+    const matched = ` ${words} `.includes(` ${full} `) || aliases.some(alias => choices.has(alias));
+    return matched ? [index] : [];
+  });
+}
+
+function misplacedQuery(value: string): boolean {
+  const words = normalizeText(value);
+  return familyOuting.test(words) || /^(?:а )?(?:на|в) /u.test(words) &&
+    weekdayChoices(words).every(choice => weekdays.some(forms => forms.includes(choice)));
+}
 const months = 'января февраля марта апреля мая июня июля августа сентября октября ноября декабря'.split(' ');
 const monthForms = 'январе феврале марте апреле мае июне июле августе сентябре октябре ноябре декабре'.split(' ');
 const namedDatePattern = new RegExp(`(?:^|\\D)(\\d{1,2})\\s+(${months.join('|')})(?:\\s+(\\d{4}))?`, 'gu');
@@ -64,6 +94,11 @@ export function cleanContext(input: unknown): DiscoveryContext {
     result.untilDate = values.untilDate;
   }
   if (values.language === 'ba' || values.language === 'ru') result.language = values.language;
+  if (values.planMode === 'single' || values.planMode === 'day') result.planMode = values.planMode;
+  if (result.planMode === 'day' && typeof values.planCount === 'number' && Number.isInteger(values.planCount) &&
+      values.planCount >= 2 && values.planCount <= dayPlanLimit) result.planCount = values.planCount;
+  if (values.transport === 'car' || values.transport === 'transit' || values.transport === 'walk' ||
+      values.transport === 'bike' || values.transport === 'taxi') result.transport = values.transport;
   for (const field of ['latestEnd', 'earliestStart'] as const) {
     const value = values[field];
     if (typeof value === 'string' && validTime.test(value)) result[field] = value;
@@ -96,9 +131,15 @@ function oneEditApart(left: string, right: string): boolean {
     left.slice(index + 2) === right.slice(index + 2);
 }
 
+function explicitCities(words: string, cities: string[]): string[] {
+  return [...new Set([
+    ...regionalCities.filter(([_name, pattern]) => pattern.test(words)).map(([name]) => name),
+    ...cities.filter(name => (' ' + words + ' ').includes(' ' + normalizeText(name) + ' ')),
+  ])];
+}
+
 function mentionedCity(words: string, cities: string[]): string | undefined {
-  const city = regionalCities.find(([_name, pattern]) => pattern.test(words))?.[0];
-  const exact = city ?? cities.find(name => (' ' + words + ' ').includes(' ' + normalizeText(name) + ' '));
+  const [exact] = explicitCities(words, cities);
   if (exact) return exact;
   // A near match must be in a city position and identify only one known city.
   const place = words.includes(' ') ? /(?:^| )(?:в|город) ([а-я]{5,})(?= |$)/gu : /^([а-я]{5,})$/gu;
@@ -151,6 +192,37 @@ export function isSearchReset(message: string): boolean {
   return /^(?:новый поиск|начнем заново|сначала)(?: |$)/u.test(normalizeText(message));
 }
 
+export function readPlanRequest(message: string, countReply = false): { mode?: DiscoveryContext['planMode']; count?: number } {
+  const stripped = normalizeText(message.replace(/[«"][^»"]+[»"]/gu, ' '));
+  const words = /(?:^| )не .+? а (.+)$/u.exec(stripped)?.[1] ?? stripped;
+  const counts: Record<string, number> = { одно: 1, один: 1, одну: 1, два: 2, две: 2, три: 3, четыре: 4,
+    пять: 5, шесть: 6, семь: 7, восемь: 8, девять: 9, десять: 10 };
+  const token = /(?:^| )(\d+|одно|один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять) (?:событи[еяй]|мероприяти[еяй]|концерт(?:а|ов)?|спектакл[яейь]|выстав(?:ка|ки|ку|ок)|экскурси[яюий]|кино(?:сеанс(?:а|ов)?)?|сеанс(?:а|ов)?|фильм(?:а|ов)?|мультфильм(?:а|ов)?)(?= |$)/u.exec(words)?.[1]
+    ?? (countReply ? /^(?:давайте? |хочу )?(\d+|одно|один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять)$/u.exec(words)?.[1] : undefined);
+  if (/(?:одно|один|\d) (?:событи[еяй] )?или (?:несколько|\d)/u.test(words)) return {};
+  if (token) {
+    const count = counts[token] ?? Number(token);
+    return { mode: count === 1 ? 'single' : 'day', count };
+  }
+  if (/(?:^| )(?:несколько (?:событи[йя]|мероприятий|вариантов)|план на (?:день|сегодня|завтра|выходн[а-я]*|\d{1,4})|(?:составь|собери|сделай|построй|запланируй)(?: мне)?(?: семейный| спокойный)? (?:план|маршрут|выходной))(?= |$)/u.test(words) ||
+      (countReply && /^(?:давайте? |хочу )?(?:несколько|план|маршрут)$/u.test(words))) return { mode: 'day' };
+  return {};
+}
+
+function readTransport(words: string): DiscoveryContext['transport'] | null {
+  const choice = /(?:^| )не .+? (?:а|но) (.+)$/u.exec(words)?.[1] ?? words;
+  const options = {
+    car: /(?:^| )(?:на (?:своей |личной )?(?:машине|авто|автомобиле)|(?:есть|у нас) машина|за рулем)(?= |$)|^(?:машина|авто)$/u,
+    transit: /(?:^| )(?:на (?:автобусе|троллейбусе|трамвае|метро|маршрутке|общественном(?: транспорте)?)|общественным транспортом|автобусом|трамваем)(?= |$)|^(?:автобус|общественный транспорт)$/u,
+    walk: /(?:^| )пешком(?= |$)/u,
+    bike: /(?:^| )(?:на (?:велосипеде|велике)|велосипедом)(?= |$)|^велосипед$/u,
+    taxi: /(?:^| )на такси(?= |$)|^такси$/u,
+  };
+  const matches = (Object.keys(options) as (keyof typeof options)[]).filter(mode => options[mode].test(choice));
+  if (matches.length === 1 && !/(?:^| )(?:не (?:на|пешком)|без машины)(?= |$)/u.test(choice)) return matches[0];
+  if (matches.length || /(?:^| )(?:без машины|(?:у меня|у нас) нет машины|машины нет)(?= |$)/u.test(choice)) return null;
+}
+
 function timeWindow(text: string) {
   const window = /(?:^|\s)с\s+(\d{1,2})(?::(\d{2}))?\s+(?:до|по)\s+(\d{1,2})(?::(\d{2}))?(\s+час(?:ов|а)?)?(?=$|[^\d:])/u.exec(text);
   if (window && (window[2] || window[4] || window[5])) {
@@ -162,11 +234,12 @@ function formatTime(hour: string, minute = '00'): string {
   return `${hour.padStart(2, '0')}:${minute}`;
 }
 
-export function constraintIssue(message: string): string | undefined {
+export function constraintIssue(message: string, planning = false): string | undefined {
   const plain = message.replace(/[«"][^»"]+[»"]/gu, ' ');
   const words = normalizeText(plain);
   const text = plain.toLowerCase().replaceAll('ё', 'е').replace(/[\u00a0\u202f]/g, ' ');
-  if (/(?:составь|собери|запланируй) (?:мне )?(?:семейный |спокойный )?(?:план|маршрут|выходной)|(?:^| )(?:в радиусе|только пешком|пешком не|дойти пешком|расстояние между|не дальше|не более \d+(?: \d+)? (?:км|километр[а-я]*))(?= |$)/u.test(words)) {
+  if ((!planning && /(?:составь|собери|запланируй) (?:мне )?(?:семейный |спокойный )?(?:план|маршрут|выходной)|(?:^| )(?:только пешком|пешком не|дойти пешком)(?= |$)/u.test(words)) ||
+      /(?:^| )(?:в радиусе|расстояние между|не дальше|не более \d+(?: \d+)? (?:км|километр[а-я]*))(?= |$)/u.test(words)) {
     return 'Могу подобрать события по городу, дате, цене и возрасту. Для прогулки или маршрута между площадками пока не могу проверить расстояние. Хотите поискать отдельные события?';
   }
   if (/(?:^|[\s,:])[-−]\s*\d[\d ,.]*\s*(?:₽|руб|р(?:[ .]|$))/u.test(text)) {
@@ -209,18 +282,30 @@ function dateConnector(text: string, first: RegExpMatchArray, second: RegExpMatc
   return normalizeText(text.slice((first.index ?? 0) + first[0].length, (second.index ?? 0) + 1));
 }
 
-export function readIntent(message: string, previous: DiscoveryContext, cities: string[], now: Date, venues: readonly KnownVenue[] = []): DiscoveryContext {
+export function readIntent(message: string, previous: DiscoveryContext, cities: string[], now: Date, venues: readonly KnownVenue[] = [], planning = false): DiscoveryContext {
   const quoted = /[«"]([^»"]{2,100})[»"]/u.exec(message)?.[1];
   const plain = message.replace(/[«"][^»"]{2,100}[»"]/gu, value => ' '.repeat(value.length));
   const text = plain.toLowerCase().replaceAll('ё', 'е').replace(/[\u00a0\u202f]/g, ' ');
-  const origin = /(?:едем от|поедем от|выезжаем от|отправляемся от|точка отправления\s*:|откуда\s*:)\s*([^!?\n]{2,120})/u.exec(text);
+  const origin = /(?:едем от|поедем от|поеду от|выезжаем от|отправляемся от|отправляюсь от|точка отправления\s*:|откуда\s*:)\s*([^!?\n]{2,120})/u.exec(text);
   const nearby = /(?:ближе|поближе) к\s+([^!?\n]{2,120})/u.exec(text);
   const originPhrase = origin ?? nearby;
   const words = normalizeText(originPhrase ? text.slice(0, originPhrase.index) : text);
   const today = localDate(now);
-  const explicitCity = /(?:^|[,.;])\s*город\s*:\s*([\p{L}-]+(?:[ -][\p{L}-]+){0,3})\s*(?=$|[,.;!?])/iu.exec(message)?.[1];
-  const city = mentionedCity(words, cities) ?? explicitCity;
+  const explicitCity = /(?:^|[,.;])\s*город\s*:\s*([\p{L}-]+(?:[ -][\p{L}-]+){0,3})\s*(?=$|[,.;!?])/iu.exec(plain)?.[1];
+  const cityOptions = planning ? explicitCities(words, cities) : [];
+  const city = planning ? cityOptions.length === 1 ? cityOptions[0] : cityOptions.length ? undefined : explicitCity
+    : mentionedCity(words, cities) ?? explicitCity;
   const context = freshIntent(words, city, previous) ? {} : { ...previous };
+  if (context.query && misplacedQuery(context.query)) {
+    if (familyOuting.test(normalizeText(context.query))) context.preference ??= 'Семейный досуг';
+    delete context.query;
+  }
+  const priorQuery = context.query;
+  if (cityOptions.length > 1) {
+    delete context.city;
+    delete context.origin;
+    delete context.venue;
+  }
   if (city) {
     if (context.city && context.city !== city) {
       delete context.origin;
@@ -243,13 +328,16 @@ export function readIntent(message: string, previous: DiscoveryContext, cities: 
       delete context.sortByDistance;
     }
     context.venue = venue.name;
-    context.city = venue.city;
+    if (!planning) context.city = venue.city;
   }
   if (/любая площадка|на любой площадке|без площадки/u.test(words)) delete context.venue;
 
   // Words describing the selected venue itself do not specify an event category.
   const venueName = venue ? normalizeText(venue.name) : '';
-  const categoryWords = /(?:^| )не .+? а (.+)$/u.exec(words)?.[1] ?? words;
+  const preferencePattern = /(?:^|[,.!?;])\s*((?:люблю|предпочитаю|(?:мне )?нравятся?)\s+[^.!?,;]{2,100})/iu;
+  const statedPreference = planning && !quoted ? preferencePattern.exec(plain)?.[1] : undefined;
+  const categoryTerms = statedPreference ? words.replace(normalizeText(statedPreference), ' ').trim() : words;
+  const categoryWords = /(?:^| )не .+? а (.+)$/u.exec(categoryTerms)?.[1] ?? categoryTerms;
   const category = Object.entries(categoryPatterns).find(([_category, pattern]) => {
     const term = pattern.exec(categoryWords)?.[0];
     if (!term) return false;
@@ -318,7 +406,8 @@ export function readIntent(message: string, previous: DiscoveryContext, cities: 
     fromDate = /в середине/u.test(words) ? localDay(first, 10) : /в конце/u.test(words) ? localDay(first, 20) : first;
     untilDate = /в начале/u.test(words) ? localDay(first, 9) : /в середине/u.test(words) ? localDay(first, 19) : last;
   }
-  const weekday = weekdays.findIndex(day => (' ' + words + ' ').includes(' ' + day + ' '));
+  const namedWeekdays = mentionedWeekdays(words);
+  const weekday = namedWeekdays[0] ?? -1;
   if (!date && !fromDate && weekday >= 0) {
     const current = new Date(today + 'T00:00:00Z').getUTCDay();
     const distance = (weekday - current + 7) % 7;
@@ -327,7 +416,15 @@ export function readIntent(message: string, previous: DiscoveryContext, cities: 
   const period = /послезавтра/u.test(words) ? undefined : /завтра/u.test(words) ? 'tomorrow' :
     /сегодня|сегодняшн/u.test(words) ? 'today' : /выходны/u.test(words) ? 'weekend' :
     /эту неделю|на (?:этой |ближайшей )?неделе|семь дней|7 дней/u.test(words) ? 'week' : undefined;
-  if (fromDate && untilDate) {
+  const relativeDays = new Set(words.match(/(?:^|(?<= ))(?:сегодня|завтра|послезавтра)(?= |$)/gu));
+  const ambiguousDate = namedWeekdays.length > 1 || relativeDays.size > 1 || new Set(text.match(/\b\d{4}-\d{2}-\d{2}\b/gu)).size > 1 ||
+    namedDays.length > 1 && /(?:^| )или(?= |$)/u.test(words);
+  if (planning && ambiguousDate) {
+    delete context.date;
+    delete context.period;
+    delete context.fromDate;
+    delete context.untilDate;
+  } else if (fromDate && untilDate) {
     context.fromDate = fromDate;
     context.untilDate = untilDate;
     delete context.date;
@@ -415,9 +512,19 @@ export function readIntent(message: string, previous: DiscoveryContext, cities: 
   const travel = /(?:ехать|дорог[аиу]|поездк[аиу]|добраться)[^\d.!?]{0,30}(\d{1,3})\s*мин/u.exec(text)
     ?? /(\d{1,3})\s*мин(?:ут[уы]?)?\s*(?:езды|на дорогу)/u.exec(text);
   if (travel) context.travelMinutes = Number(travel[1]);
+  const plan = planning ? readPlanRequest(message, !previous.planMode) : {};
+  if (plan.mode) {
+    context.planMode = plan.mode;
+    if (plan.mode === 'single') delete context.planCount;
+    else if (plan.count !== undefined) context.planCount = plan.count;
+  }
+  const transport = planning ? readTransport(normalizeText(text)) : undefined;
+  if (transport) context.transport = transport;
+  if (transport === null) delete context.transport;
   if (originPhrase) {
-    const location = message.slice(originPhrase.index + originPhrase[0].length - originPhrase[1].length,
+    let location = message.slice(originPhrase.index + originPhrase[0].length - originPhrase[1].length,
       originPhrase.index + originPhrase[0].length).replace(/[,.;]+$/, '').trim();
+    if (planning) location = location.split(/[,;]\s*(?:(?:поед[уе]м?|добер[уе]мся)\s+)?(?:на (?:машине|авто|автобусе|трамвае|такси|велосипеде)|пешком|бюджет|завтра|сегодня|город\s*:)(?=\s|$)/iu)[0];
     const knownOrigin = mentionedVenue('в ' + normalizeText(location), context.city, venues);
     context.origin = knownOrigin?.name ?? location;
   }
@@ -428,19 +535,23 @@ export function readIntent(message: string, previous: DiscoveryContext, cities: 
     delete context.sortByDistance;
   }
 
+  const familyPreference = !quoted && familyOuting.test(words);
+  if (familyPreference) context.preference = 'Семейный досуг';
+  if (statedPreference) context.preference = statedPreference.trim();
   const namedInterest = /(?:^|\s)(джаз|рок|опера|стендап|классическая музыка)(?=\s|$)/u.exec(words)?.[1];
   const headTitle = /^(?:найди|покажи|ищу|есть ли)\s+(?:спектакль|выставку|концерт|экскурсию|фестиваль|мюзикл|балет)\s+([^,.!?]+?)(?=\s+(?:в|на|с|до|после)\s+|[,.!?]|$)/iu.exec(plain)?.[1]?.trim();
   const inferredTitle = headTitle && !/^(?:мне|интересн[а-я]*|люб[а-я]*|сегодня|завтра|бесплатн[а-я]*)$/iu.test(headTitle) &&
     !/^\d/u.test(headTitle) ? headTitle : undefined;
-  if (quoted || namedInterest || inferredTitle) context.query = quoted ?? namedInterest ?? inferredTitle;
+  if (quoted || inferredTitle || (namedInterest && !statedPreference)) context.query = quoted ?? inferredTitle ?? namedInterest;
   if (!context.query && /(?:^|\s)(?:куда|что|где|найди|покажи|ищу|есть)(?:\s|$)/u.test(words)) {
     const explicit = /(?:^|\s)(?:найди|покажи|ищу)\s+([^,.!?]{2,100})/iu.exec(message)?.[1]?.trim();
-    if (explicit && !city && !category && !date && !period && !age && !budget && !travel &&
+    if (explicit && !city && !category && !date && !period && !age && !budget && !travel && !plan.mode && !transport &&
         !/^(?:мне|что|любые|интересн|события|мероприятия|варианты)/iu.test(explicit)) context.query = explicit;
   }
   const requestWords = /куда|пойти|сходить|что|найди|покажи|есть|афиша|посоветуй|подбер|предложи|событи|мероприяти|подешевле|дешевле|еще|ближе|без |люб(?:ая|ое|ой|ые)|начнем заново|сначала|новый поиск/u;
-  if (!requestWords.test(words) && !city && !category && !date && !fromDate && !period && !age && budget === undefined &&
-    !travel && !originPhrase && !window && !starting && !ending && !party && !language && !venue &&
+  const planningGreeting = planning && /^(?:привет|здравствуй(?:те)?|добры[йое] (?:день|утро|вечер))$/u.test(words);
+  if (!requestWords.test(words) && !familyPreference && !ambiguousDate && !city && !category && !date && !fromDate && !period && !age && budget === undefined &&
+    !travel && !originPhrase && !window && !starting && !ending && !party && !language && !venue && !plan.mode && transport === undefined && !statedPreference && !planningGreeting &&
     !/бесплатн|послезавтра/u.test(words) && !/^\d+$/u.test(words) && words.length > 1 && words.length <= 100) {
     context.query = message.trim();
   }
@@ -450,13 +561,13 @@ export function readIntent(message: string, previous: DiscoveryContext, cities: 
   if (context.awaitingPreference || genreReply) {
     delete context.awaitingPreference;
     const unchangedFilters = (['city', 'category', 'date', 'period', 'fromDate', 'untilDate', 'venue', 'language',
-      'earliestStart', 'latestEnd', 'childAge', 'partySize', 'budget', 'cheaperThan', 'travelMinutes', 'origin', 'sortByDistance'] as const)
+      'earliestStart', 'latestEnd', 'childAge', 'partySize', 'budget', 'cheaperThan', 'travelMinutes', 'origin', 'sortByDistance', 'planMode', 'planCount', 'transport'] as const)
       .every(field => previous[field] === context[field]);
-    const directPreference = !quoted && unchangedFilters && words.length <= 120 &&
+    const directPreference = !quoted && !familyPreference && !namedWeekdays.length && !ambiguousDate && unchangedFilters && words.length <= 120 &&
       /[а-я]/u.test(words) && !/^(?:а )?(?:что ещ[её]|покажи|найди|ищу|без |любо)/u.test(words);
     const noPreference = /^(?:любые|все равно|без разницы|нет предпочтений)$/u.test(words);
     if (directPreference || noPreference) {
-      context.query = previous.query;
+      context.query = priorQuery;
       if (directPreference) context.preference = message.trim().slice(0, 120);
       else delete context.preference;
     }
@@ -472,12 +583,13 @@ export function mergeIntent(
   cities: string[],
   venues: readonly KnownVenue[] = [],
   now = new Date(),
+  planning = false,
 ): DiscoveryContext {
   const words = normalizeText(message.replace(/[«"][^»"]+[»"]/gu, ' '));
   const cityChanged = local.city !== previous.city;
   const result = { ...local };
   if (freshIntent(words, local.city, previous) || isSearchReset(message)) return result;
-  const explicit = readIntent(message, {}, cities, now, venues);
+  const explicit = readIntent(message, {}, cities, now, venues, planning);
   const has = (value: string) => (' ' + words + ' ').includes(' ' + normalizeText(value) + ' ');
   const evidence = {
     city: interpreted.city !== undefined && (has(interpreted.city) || words.split(' ').some(word => {
@@ -498,7 +610,7 @@ export function mergeIntent(
       result[field] = interpreted[field];
     }
   };
-  if (!cityChanged && evidence.city && interpreted.city) {
+  if (!planning && !cityChanged && evidence.city && interpreted.city) {
     const spelling = cities.find(city => normalizeText(city) === normalizeText(interpreted.city ?? ''));
     set('city', Boolean(spelling || has(interpreted.city)));
     if (result.city !== local.city) {
@@ -511,10 +623,10 @@ export function mergeIntent(
     normalizeText(venue.name) === normalizeText(interpreted.venue) &&
     (!result.city || normalizeText(result.city) === normalizeText(venue.city)));
   if (modelVenue && has(modelVenue.name)) set('venue', true);
-  set('category', evidence.category && !result.venue);
+  set('category', evidence.category && !result.venue && !(planning && explicit.preference));
   const localDateChanged = (['date', 'period', 'fromDate', 'untilDate'] as const).some(field =>
     local[field] !== previous[field] || explicit[field] !== undefined);
-  if (evidence.date && !localDateChanged) {
+  if (evidence.date && !localDateChanged && local.planMode !== 'day') {
     if (interpreted.fromDate && interpreted.untilDate) {
       delete result.date;
       delete result.period;
@@ -537,13 +649,15 @@ export function mergeIntent(
   set('travelMinutes', evidence.travel);
   const query = interpreted.query && normalizeText(interpreted.query);
   const preference = interpreted.preference && normalizeText(interpreted.preference);
+  const wholeSearch = query === words && Boolean(explicit.city || explicit.date || explicit.period || explicit.fromDate ||
+    explicit.planMode || explicit.transport || explicit.preference);
   const genericQuery = query && /^(?:(?:семейн|детск|классическ|интересн|хорош|легк|весел|бесплатн|музыкальн)[а-я]* )+(?:концерт|спектакл|фильм|выставк|событи|кино|мультфильм)[а-я]*$/u.test(query);
   if (!explicit.query && preference && has(preference) &&
       /люб[люи]|нрав|хоч|предпоч|настроен|важно|чтобы был[аои]|посовету|подбер/u.test(words)) {
     result.preference = interpreted.preference;
   }
   if (genericQuery && result.category && !result.preference && has(query)) result.preference = interpreted.query;
-  if (query && !genericQuery && has(query) && !/^(?:\d+|мероприяти[а-я]*|событи[а-я]*|выставк[а-я]*|концерт[а-я]*|спектакл[а-я]*|театр[а-я]*|кино[а-я]*|фильм[а-я]*|мультфильм[а-я]*|мультик[а-я]*|бесплатн[а-я]*|дешевле|сегодня|завтра|выходны[а-я]*|что угодно)$/u.test(query) &&
+  if (query && !wholeSearch && !genericQuery && !misplacedQuery(query) && !mentionedWeekdays(query).length && has(query) && !/^(?:\d+|мероприяти[а-я]*|событи[а-я]*|выставк[а-я]*|концерт[а-я]*|спектакл[а-я]*|театр[а-я]*|кино[а-я]*|фильм[а-я]*|мультфильм[а-я]*|мультик[а-я]*|бесплатн[а-я]*|дешевле|сегодня|завтра|выходны[а-я]*|что угодно)$/u.test(query) &&
       (!preference || !(' ' + preference + ' ').includes(' ' + query + ' ')) &&
       !cities.some(city => normalizeText(city) === query)) set('query', true);
   return cleanContext(result);

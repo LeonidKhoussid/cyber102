@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import type { DiscoveryResponse } from '@afisha/contracts';
 import { request } from './http.ts';
-import { Icon } from './ui.tsx';
+import { Icon, SidebarLeftIcon } from './ui.tsx';
 
 export type Account = { id: string; email?: string; name: string };
 export type Session = { user: Account | null; telegramEnabled: boolean };
@@ -80,11 +80,9 @@ export function AuthDialog({ mode, telegramEnabled, telegramIssue, onMode, onClo
   return <Dialog className="account-dialog" labelledBy="account-title" onClose={() => { if (!busy) onClose(); }}>
     <div className="dialog-content">
       <header className="dialog-header">
-        <span className="brand-icon"><Icon name="mark" /></span>
+        <h2 id="account-title">{register ? 'Создать аккаунт' : 'Войти в Афишу'}</h2>
         <button type="button" className="icon-button" aria-label="Закрыть" disabled={busy} onClick={onClose}><Icon name="close" /></button>
       </header>
-      <h2 id="account-title">{register ? 'Создать аккаунт' : 'Войти в Афишу'}</h2>
-      <p className="dialog-copy">Сохраняйте поиски и продолжайте с того же места.</p>
       <form className="account-form" onSubmit={event => void submit(event)}>
         {register && <label>Имя<input ref={nameField} type="text" name="name" maxLength={80} autoComplete="name" required disabled={busy} /></label>}
         <label>Электронная почта<input ref={emailField} type="email" name="email" maxLength={254} autoComplete="email" required disabled={busy} /></label>
@@ -127,7 +125,7 @@ export function ChatSidebar({ account, chats, chatId, loading, error, signingOut
   const content = <div className="history-sidebar">
     <div className="history-top">
       <button className="history-new" type="button" onClick={onNew}><Icon name="plus" />Новый поиск</button>
-      {mobile && <button className="icon-button" type="button" aria-label="Закрыть историю" onClick={onClose}><Icon name="close" /></button>}
+      <button id="close-history" className="icon-button" type="button" aria-label="Закрыть историю" title="Закрыть историю" onClick={onClose}><SidebarLeftIcon /></button>
     </div>
     <nav className="history-nav" aria-labelledby="history-title">
       <h2 id="history-title">История поиска</h2>
