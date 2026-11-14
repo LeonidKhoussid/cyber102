@@ -194,15 +194,16 @@ export function openPostgresCatalog(pool: Pool, clock = () => new Date()): Catal
     });
   }
 
-  async function search(filters: EventFilters = {}): Promise<EventPage> {
+  async function search(filters: EventFilters = {}, admin?: { status?: EventStatus }): Promise<EventPage> {
     const page = Math.min(10_000, Math.max(1, Math.trunc(filters.page ?? 1)));
     const limit = Math.min(50, Math.max(1, Math.trunc(filters.limit ?? 12)));
     const now = clock().toISOString();
-    const conditions = ["status = 'published'", 'COALESCE(ends_at, starts_at) >= $1'];
-    const parameters: (number | string)[] = [now];
+    const conditions = admin ? ['TRUE'] : ["status = 'published'", 'COALESCE(ends_at, starts_at) >= $1'];
+    const parameters: (number | string)[] = admin ? [] : [now];
     function add(condition: (slot: string) => string, value: number | string | undefined) {
       if (value !== undefined && value !== '') conditions.push(condition('$' + parameters.push(value)));
     }
+    add(slot => `status = ${slot}`, admin?.status);
     add(slot => `city_key = ${slot}`, filters.city && normalizeText(filters.city));
     add(slot => `venue_key = ${slot}`, filters.venue && normalizeText(filters.venue));
     add(slot => `category = ${slot}`, filters.category);
@@ -217,7 +218,7 @@ export function openPostgresCatalog(pool: Pool, clock = () => new Date()): Catal
     }
     const where = conditions.join(' AND ');
     const whereParameters = [...parameters];
-    let order = 'starts_at, id';
+    let order = admin ? 'starts_at DESC, id' : 'starts_at, id';
     if (filters.sort === 'price') order = 'price_min ASC NULLS LAST, ' + order;
     if (filters.sort === 'sessions' || filters.sort === 'family') {
       const family = filters.sort === 'family' ? "(regexp_replace(lower(title), '[^[:alnum:]]+', ' ', 'g') ~ '(^| )(детск|семейн)|(^| )для (детей|малышей)( |$)') DESC, " : '';

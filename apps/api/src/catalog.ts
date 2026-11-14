@@ -360,17 +360,18 @@ export function openCatalog(filename = 'data/catalog.sqlite', clock = () => new 
     return report;
   }
 
-  function search(filters: EventFilters = {}): EventPage {
+  function search(filters: EventFilters = {}, admin?: { status?: EventStatus }): EventPage {
     const page = Math.min(10_000, Math.max(1, Math.trunc(filters.page ?? 1)));
     const limit = Math.min(50, Math.max(1, Math.trunc(filters.limit ?? 12)));
-    const conditions = ["status = 'published'", 'COALESCE(ends_at, starts_at) >= ?'];
+    const conditions = admin ? ['1 = 1'] : ["status = 'published'", 'COALESCE(ends_at, starts_at) >= ?'];
     const now = clock().toISOString();
-    const parameters: (number | string)[] = [now];
+    const parameters: (number | string)[] = admin ? [] : [now];
     function add(condition: string, value: number | string | undefined) {
       if (value === undefined || value === '') return;
       conditions.push(condition);
       parameters.push(value);
     }
+    add('status = ?', admin?.status);
     add('city_key = ?', filters.city && normalizeText(filters.city));
     add('venue_key = ?', filters.venue && normalizeText(filters.venue));
     add('category = ?', filters.category);
@@ -383,7 +384,7 @@ export function openCatalog(filename = 'data/catalog.sqlite', clock = () => new 
     if (filters.matchWords || byRelevance) add('event_relevance(?, title, search_text) > 0', query);
     else for (const term of query.split(' ').filter(Boolean).slice(0, 12)) add('instr(search_text, ?) > 0', term);
     const where = conditions.join(' AND ');
-    let order = 'starts_at, id';
+    let order = admin ? 'starts_at DESC, id' : 'starts_at, id';
     const sortParameters: string[] = [];
     if (byRelevance) {
       order = 'event_relevance(?, title, search_text) DESC, ' + order;

@@ -243,6 +243,20 @@ export function registerApi(server: FastifyInstance, catalog: CatalogStore, opti
     return event ? cached(request, reply, event) : failure(reply, 404, 'event_not_found', 'Событие не найдено.');
   });
   server.get('/api/v1/directories', async (request, reply) => cached(request, reply, await catalog.directories()));
+  server.get<{ Querystring: QueryValues }>('/api/v1/admin/events', async (request, reply) => {
+    reply.header('cache-control', 'no-store');
+    if (!authorized(request, reply, token)) return;
+    const status = request.query.status;
+    if (status !== undefined && status !== 'draft' && status !== 'published' && status !== 'cancelled') {
+      return failure(reply, 400, 'invalid_status', 'Допустимые статусы: published, draft, cancelled.');
+    }
+    try {
+      return await catalog.search(parseFilters(request.query, options.clock?.()), { status });
+    } catch (error) {
+      if (error instanceof FilterError) return failure(reply, 400, 'invalid_filter', error.message);
+      throw error;
+    }
+  });
   server.post('/api/v1/admin/import', (request, reply) => {
     if (!authorized(request, reply, token)) return;
     let events: ReturnType<typeof parseImport>;

@@ -1,9 +1,12 @@
+import { lazy, Suspense } from 'react';
 import { createRoot } from 'react-dom/client';
 import { filterKeys, Listing } from './catalog.tsx';
 import { Discovery } from './discovery.tsx';
 import { Detail } from './events.tsx';
 import { Icon, Shell } from './ui.tsx';
 import './styles.css';
+
+const Admin = lazy(() => import('./admin.tsx').then(module => ({ default: module.Admin })));
 
 function Docs() {
   return <Shell><main id="main" className="inner docs">
@@ -25,6 +28,7 @@ function App() {
   const path = window.location.pathname.replace(/\/$/, '') || '/';
   const event = path.match(/^\/events\/([^/]+)$/);
   if (event) return <Detail id={event[1]} />;
+  if (path === '/admin') return <Suspense fallback={<Shell><main id="main" className="inner"><p role="status">Загружаем управление…</p></main></Shell>}><Admin /></Suspense>;
   if (path === '/docs') return <Docs />;
   if (path === '/widget') return <Listing embedded />;
   const params = new URLSearchParams(window.location.search);
