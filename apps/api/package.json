@@ -1,1 +1,1 @@
-{"name":"@afisha/api","version":"0.1.0","private":true,"type":"module","dependencies":{"@afisha/contracts":"0.1.0","@fastify/rate-limit":"11.2.2","cheerio":"1.2.0","csv-parse":"7.0.3","fastify":"5.12.8"}}
+{"name":"@afisha/api","version":"0.1.0","private":true,"type":"module","dependencies":{"@afisha/contracts":"0.1.0","@fastify/rate-limit":"11.2.2","cheerio":"1.2.0","csv-parse":"7.0.3","fastify":"5.12.8","jose":"6.2.17","pg":"8.23.1"}}

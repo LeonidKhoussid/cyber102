@@ -1,0 +1,1471 @@
+[
+  {
+    "name": "ufa",
+    "cases": [
+      {
+        "message": "Балет «Легенда о любви» в Уфе 16 ноября 2026 для ребёнка 12 лет, с началом не раньше 19:00.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-16",
+          "category": "theatre",
+          "childAge": 12,
+          "earliestStart": "19:00",
+          "includes": [
+            {
+              "title": "Легенда о любви",
+              "start": "2026-11-16T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/ballet/4762/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Спектакль «Дон Кихот» в Уфе с 18 по 26 ноября 2026, ребёнку 12 лет.",
+        "expect": {
+          "city": "Уфа",
+          "fromDate": "2026-11-18",
+          "untilDate": "2026-11-26",
+          "category": "theatre",
+          "childAge": 12,
+          "includes": [
+            {
+              "title": "Дон Кихот",
+              "start": "2026-11-26T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/ballet/272/"
+            }
+          ],
+          "excludes": [
+            {
+              "title": "Дон Кихот",
+              "start": "2026-11-18T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/opera/13548/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Покажи спектакль «Дон Кихот» в Уфе 18 ноября 2026. Подростку 16 лет, нужно закончить не позднее 22:00.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-18",
+          "category": "theatre",
+          "childAge": 16,
+          "latestEnd": "22:00",
+          "includes": [
+            {
+              "title": "Дон Кихот",
+              "start": "2026-11-18T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/opera/13548/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "В Уфе с 18 по 19 ноября 2026 найди фестиваль «Музыка, рожденная ветром» до 1200 рублей на двоих.",
+        "expect": {
+          "city": "Уфа",
+          "fromDate": "2026-11-18",
+          "untilDate": "2026-11-19",
+          "category": "festival",
+          "budget": 1200,
+          "partySize": 2,
+          "includes": [
+            {
+              "title": "Музыка, рожденная ветром. VI Международный этнический фестиваль",
+              "start": "2026-11-18T19:00:00+05:00",
+              "source": "https://bashgf.ru/afisha/event/muzyka-rozhdennaja-vetrom-vi-mezhdunarodnyj-jetnicheskij-festival/"
+            },
+            {
+              "title": "Музыка, рожденная ветром. VI Международный этнический фестиваль",
+              "start": "2026-11-19T19:00:00+05:00",
+              "source": "https://bashgf.ru/afisha/event/muzyka-rozhdennaja-vetrom-vi-mezhdunarodnyj-jetnicheskij-festival-2/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Фестиваль «Музыка, рожденная ветром» в Уфе 19 ноября 2026, в пределах 1799 рублей на троих.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-19",
+          "category": "festival",
+          "budget": 1799,
+          "partySize": 3,
+          "excludes": [
+            {
+              "title": "Музыка, рожденная ветром. VI Международный этнический фестиваль",
+              "start": "2026-11-19T19:00:00+05:00",
+              "source": "https://bashgf.ru/afisha/event/muzyka-rozhdennaja-vetrom-vi-mezhdunarodnyj-jetnicheskij-festival-2/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Нужен концерт «Прекрасная цветочница» в Уфе на 25 ноября 2026, ребёнку 6 лет, закончить не позже 21:00.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-25",
+          "category": "concert",
+          "childAge": 6,
+          "latestEnd": "21:00",
+          "includes": [
+            {
+              "title": "Прекрасная цветочница, или Как стать леди",
+              "start": "2026-11-25T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/concert/15883/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Балет «Ромео и Джульетта» в Уфе 27 ноября 2026, с 19:00 до 21:10.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-27",
+          "category": "theatre",
+          "earliestStart": "19:00",
+          "latestEnd": "21:10",
+          "includes": [
+            {
+              "title": "Ромео и Джульетта",
+              "start": "2026-11-27T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/ballet/281/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Найди спектакль «Садко» в Уфе с 29 ноября 2026 по 1 декабря 2026. Нужно закончить не позднее 22:00.",
+        "expect": {
+          "city": "Уфа",
+          "fromDate": "2026-11-29",
+          "untilDate": "2026-12-01",
+          "category": "theatre",
+          "latestEnd": "22:00",
+          "includes": [
+            {
+              "title": "Садко",
+              "start": "2026-11-29T18:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/opera/14148/"
+            }
+          ],
+          "excludes": [
+            {
+              "title": "Садко",
+              "start": "2026-12-01T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/opera/14148/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Спектакль «Садко» в Уфе 1 декабря 2026 для ребёнка 12 лет. Конец не позже 23:00.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-12-01",
+          "category": "theatre",
+          "childAge": 12,
+          "latestEnd": "23:00",
+          "includes": [
+            {
+              "title": "Садко",
+              "start": "2026-12-01T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/opera/14148/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Спектакль «Кармен» в Уфе 15 и 16 декабря 2026 для подростка 16 лет.",
+        "expect": {
+          "city": "Уфа",
+          "fromDate": "2026-12-15",
+          "untilDate": "2026-12-16",
+          "category": "theatre",
+          "childAge": 16,
+          "includes": [
+            {
+              "title": "Кармен",
+              "start": "2026-12-15T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/opera/4837/"
+            },
+            {
+              "title": "Кармен",
+              "start": "2026-12-16T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/opera/4837/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Спектакль «Кармен» в Уфе 16 декабря 2026 для подростка 15 лет.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-12-16",
+          "category": "theatre",
+          "childAge": 15,
+          "excludes": [
+            {
+              "title": "Кармен",
+              "start": "2026-12-16T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/opera/4837/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Спектакль «Летучий корабль» в Уфе 20 декабря 2026, не раньше 15:00, для ребёнка 6 лет.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-12-20",
+          "category": "theatre",
+          "childAge": 6,
+          "earliestStart": "15:00",
+          "includes": [
+            {
+              "title": "Летучий корабль",
+              "start": "2026-12-20T15:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/children/11932/"
+            }
+          ],
+          "excludes": [
+            {
+              "title": "Летучий корабль",
+              "start": "2026-12-20T12:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/children/11932/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Спектакль «Летучий корабль» в Уфе 3 января 2027, чтобы закончился не позже 13:10.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2027-01-03",
+          "category": "theatre",
+          "latestEnd": "13:10",
+          "includes": [
+            {
+              "title": "Летучий корабль",
+              "start": "2027-01-03T12:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/children/11932/"
+            }
+          ],
+          "excludes": [
+            {
+              "title": "Летучий корабль",
+              "start": "2027-01-03T15:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/children/11932/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Концерт «Рождество» в Уфе 25 декабря 2026 с 19:00 до 20:30.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-12-25",
+          "category": "concert",
+          "earliestStart": "19:00",
+          "latestEnd": "20:30",
+          "includes": [
+            {
+              "title": "Рождество",
+              "start": "2026-12-25T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/concert/15925/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Концерт «Рождество» в Уфе 5 января 2027. Для ребёнка 12 лет, до 19:30 по времени.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2027-01-05",
+          "category": "concert",
+          "childAge": 12,
+          "latestEnd": "19:30",
+          "includes": [
+            {
+              "title": "Рождество",
+              "start": "2027-01-05T18:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/concert/15925/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Найди концерт «Алексей Людевиг» в Уфе на 27 ноября 2026, до 1800 рублей на троих.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-27",
+          "category": "concert",
+          "budget": 1800,
+          "partySize": 3,
+          "includes": [
+            {
+              "title": "Алексей ЛЮДЕВИГ/альт, Санкт-Петербург и Камерный оркестр Башкирской филармонии",
+              "start": "2026-11-27T19:00:00+05:00",
+              "source": "https://bashgf.ru/afisha/event/aleksej-ljudevig-i-kamernyj-orkestr/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Концерт «Дюймовочка» в Уфе 29 ноября 2026, с началом не раньше 15:00 и ценой до 600 рублей.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-29",
+          "category": "concert",
+          "budget": 600,
+          "earliestStart": "15:00",
+          "includes": [
+            {
+              "title": "ДЮЙМОВОЧКА. Ганс-Христиан Андерсен",
+              "start": "2026-11-29T15:00:00+05:00",
+              "source": "https://bashgf.ru/afisha/event/skazki-djadjushki-organa-gadkij-utenok/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Концерт «Звёздный путь» 30 ноября 2026 в Уфе, до 2400 рублей на 4 человек.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-30",
+          "category": "concert",
+          "budget": 2400,
+          "partySize": 4,
+          "includes": [
+            {
+              "title": "Йондоҙ юлы. Звёздный путь",
+              "start": "2026-11-30T19:00:00+05:00",
+              "source": "https://bashgf.ru/afisha/event/joldyz-july/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Концерт «Яратам» 26 ноября 2026 в Уфе, бюджет до 599 рублей.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-26",
+          "category": "concert",
+          "budget": 599,
+          "excludes": [
+            {
+              "title": "Яратам..",
+              "start": "2026-11-26T19:00:00+05:00",
+              "source": "https://bashgf.ru/afisha/event/lilija-ishemjarova-jubilejnyj-koncert/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "На 28 ноября 2026 подбери концерт «Симфоническая Вселенная» в Уфе в ГКЗ Башкортостан, ребёнку 6 лет.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-28",
+          "category": "concert",
+          "childAge": 6,
+          "venue": "ГКЗ «Башкортостан»",
+          "includes": [
+            {
+              "title": "Симфоническая Вселенная",
+              "start": "2026-11-28T18:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/simfonicheskaya-vselennaya2/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Покажи концерт «Открытие VIII Зимнего фестиваля» в Уфе 1 декабря 2026 в ГКЗ Башкортостан, после 18:30.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-12-01",
+          "category": "concert",
+          "earliestStart": "18:30",
+          "venue": "ГКЗ «Башкортостан»",
+          "includes": [
+            {
+              "title": "Открытие VIII Зимнего фестиваля. Шедевры русской классики",
+              "start": "2026-12-01T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/otkrytie-viii-zimnego-festivalya-shedevry-russkoy-klassiki/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "В Уфе 24 ноября 2026 ищу концерт «Елкән» для ребёнка 6 лет в ГКЗ Башкортостан.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-24",
+          "category": "concert",
+          "childAge": 6,
+          "venue": "ГКЗ «Башкортостан»",
+          "includes": [
+            {
+              "title": "Гала-концерт Шестого телевизионного конкурса юных исполнителей «Елкән»",
+              "start": "2026-11-24T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/gala-kontsert-shestogo-televizionnogo-konkursa-yunykh-ispolniteley-elk-n/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Найди бесплатный концерт «Елкән» в Уфе 24 ноября 2026.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-11-24",
+          "category": "concert",
+          "free": true,
+          "includes": [
+            {
+              "title": "Гала-концерт Шестого телевизионного конкурса юных исполнителей «Елкән»",
+              "start": "2026-11-24T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/gala-kontsert-shestogo-televizionnogo-konkursa-yunykh-ispolniteley-elk-n/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Спектакль «Кармен» в Уфе 16 декабря 2026 на русском языке.",
+        "expect": {
+          "city": "Уфа",
+          "date": "2026-12-16",
+          "category": "theatre",
+          "language": "ru",
+          "excludes": [
+            {
+              "title": "Кармен",
+              "start": "2026-12-16T19:00:00+05:00",
+              "source": "https://bashopera.ru/repertoire/opera/4837/"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "sterlitamak",
+    "cases": [
+      {
+        "message": "Есть ли 15 ноября в Стерлитамаке экскурсия «Мастерская сказки» до 300 рублей на троих с ребёнком 6 лет?",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-15",
+          "category": "tour",
+          "budget": 300,
+          "partySize": 3,
+          "childAge": 6,
+          "includes": [
+            {
+              "title": "Интерактивный квест-экскурсия в Творческой лаборатории «МАСТЕРСКАЯ СКАЗКИ»",
+              "start": "2026-11-15T09:00:00+05:00",
+              "source": "https://lib-str.ru/events/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Покажи бесплатную выставку «Стерлитамак. Утраченное и восстановленное» в Стерлитамаке 15 ноября.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-15",
+          "category": "exhibition",
+          "budget": 0,
+          "includes": [
+            {
+              "title": "Художественная выставка «Стерлитамак. Утраченное и восстановленное»",
+              "start": "2026-11-15T09:00:00+05:00",
+              "source": "https://lib-str.ru/events/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Найди бесплатный библиотечный урок «Лечим книги» в Стерлитамаке 15 ноября, для ребёнка 6 лет.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-15",
+          "budget": 0,
+          "childAge": 6,
+          "includes": [
+            {
+              "title": "Библиотечный урок «Лечим книги»",
+              "start": "2026-11-15T14:00:00+05:00",
+              "source": "https://lib-str.ru/events/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Есть ли концерт «По дороге с облаками» в Стерлитамаке 15 ноября с ребёнком 3 лет, до 400 рублей за билет?",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-15",
+          "category": "concert",
+          "budget": 400,
+          "childAge": 3,
+          "partySize": 1,
+          "includes": [
+            {
+              "title": "Музыкальная программа “По дороге с облаками”",
+              "start": "2026-11-15T12:00:00+05:00",
+              "source": "https://sgtko.ru/afisha/event/muzykalnaja-programma-po-doroge-s-oblakami/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Хочу на спектакль «Ужин с дураком» в Стерлитамаке 15 ноября, с ребёнком 15 лет.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-15",
+          "category": "theatre",
+          "childAge": 15,
+          "excludes": [
+            {
+              "title": "Ужин с дураком",
+              "start": "2026-11-15T18:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/uzhin-s-durakom-15-11-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Найди «Зверодвиж» в Арбате в Стерлитамаке 16 ноября, с началом не раньше 13:00 и концом не позже 14:21.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-16",
+          "earliestStart": "13:00",
+          "latestEnd": "14:21",
+          "venue": "Кинотеатр «Арбат»",
+          "includes": [
+            {
+              "title": "Зверодвиж",
+              "start": "2026-11-16T13:00:00+05:00",
+              "source": "https://www.mirage.ru/str/film/7676/16.11.2026/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Покажи «Морозко» в Кинопорте в Стерлитамаке 16 ноября. Билет до 250 рублей.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-16",
+          "budget": 250,
+          "venue": "Киноцентр «Кинопорт»",
+          "includes": [
+            {
+              "title": "Морозко",
+              "start": "2026-11-16T13:25:00+05:00",
+              "source": "https://kino-str.ru/schedule?date=16.11.2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "17 ноября в Стерлитамаке хочу посмотреть «Приключения Мамонтёнка» в кино. Выйти из зала нужно не позже 15:58.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-17",
+          "category": "cinema",
+          "latestEnd": "15:58",
+          "excludes": [
+            {
+              "title": "Приключения Мамонтёнка. В поисках мамы",
+              "start": "2026-11-17T14:40:00+05:00",
+              "source": "https://www.mirage.ru/str/film/7580/17.11.2026/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Кино «Сказка о потерянном времени» в Стерлитамаке 18 ноября. Старт не раньше 16:30, до 250 рублей на двоих.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-18",
+          "category": "cinema",
+          "earliestStart": "16:30",
+          "budget": 250,
+          "partySize": 2,
+          "includes": [
+            {
+              "title": "Сказка о потерянном времени",
+              "start": "2026-11-18T17:00:00+05:00",
+              "source": "https://www.mirage.ru/str/film/7622/18.11.2026/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Найди спектакль «Весы» в Стерлитамаке 18 ноября. Покажи только бесплатные билеты.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-18",
+          "category": "theatre",
+          "budget": 0,
+          "excludes": [
+            {
+              "title": "Весы",
+              "start": "2026-11-18T19:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/vesy-18-11-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Спектакль «Четыре жениха для Диляфруз» в Стерлитамаке 21 ноября. С ребёнком 12 лет, конец не позже 19:00, до 1200 рублей на троих.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-21",
+          "category": "theatre",
+          "childAge": 12,
+          "latestEnd": "19:00",
+          "budget": 1200,
+          "partySize": 3,
+          "includes": [
+            {
+              "title": "Спектакль “Диләфрүзгә дүрт кейәү” / “Четыре жениха для Диляфруз”",
+              "start": "2026-11-21T18:00:00+05:00",
+              "source": "https://sgtko.ru/afisha/event/spektakl-dil-fr-zg-d-rt-kej-chetyre-zheniha-dlja-diljafruz-11/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Могу ли я сходить на спектакль «Маскарад» в Стерлитамаке 21 ноября и закончить не позже 20:09?",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-21",
+          "category": "theatre",
+          "latestEnd": "20:09",
+          "excludes": [
+            {
+              "title": "Маскарад",
+              "start": "2026-11-21T18:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/maskarad-21-11-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "22 ноября в Стерлитамаке нужен спектакль «Муха-цокотуха» для ребёнка 4 лет, до 1050 рублей на троих.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-22",
+          "category": "theatre",
+          "childAge": 4,
+          "budget": 1050,
+          "partySize": 3,
+          "includes": [
+            {
+              "title": "Муха - Цокотуха",
+              "start": "2026-11-22T12:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/mukha-tsokotukha-22-11-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Покажи спектакль «Руслан и Людмила» в Стерлитамаке 22 ноября с началом после 18:00 и концом не позже 20:00.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-22",
+          "category": "theatre",
+          "earliestStart": "18:00",
+          "latestEnd": "20:00",
+          "includes": [
+            {
+              "title": "Руслан и Людмила",
+              "start": "2026-11-22T18:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/ruslan-i-lyudmila-22-11-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Найди концерт «Мир оперетт» в Стерлитамаке 24 ноября. Можно прийти с ребёнком 12 лет? Нужно закончить не позже 20:00.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-24",
+          "category": "concert",
+          "childAge": 12,
+          "latestEnd": "20:00",
+          "includes": [
+            {
+              "title": "Мир оперетт",
+              "start": "2026-11-24T19:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/mir-operett-24-11-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Концерт «Мы – народ, и мы едины» в Стерлитамаке 27 ноября. Идём с ребёнком 6 лет, бюджет 800 рублей на двоих.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-27",
+          "category": "concert",
+          "childAge": 6,
+          "budget": 800,
+          "partySize": 2,
+          "includes": [
+            {
+              "title": "Концерт “Берҙәм халыҡ – ил терәге” / “Мы – народ, и мы едины. Дружбой мы непобедимы!”",
+              "start": "2026-11-27T19:00:00+05:00",
+              "source": "https://sgtko.ru/afisha/event/koncert-ber-m-haly-il-ter-ge-my-narod-i-my-ediny-druzhboj-my-nepobedimy/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Найди спектакль «Как важно быть серьёзным» в Стерлитамаке 28 ноября, только если билет дешевле 500 рублей.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-28",
+          "category": "theatre",
+          "budget": 500,
+          "excludes": [
+            {
+              "title": "Как важно быть серьёзным",
+              "start": "2026-11-28T18:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/kak-vazhno-byt-serjoznym-28-11-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "В Стерлитамаке 29 ноября хочу на спектакль «Летучий корабль» с ребёнком 3 лет. Уложимся в 900 рублей на двоих и выйдем не позже 13:10?",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-29",
+          "category": "theatre",
+          "childAge": 3,
+          "budget": 900,
+          "partySize": 2,
+          "latestEnd": "13:10",
+          "includes": [
+            {
+              "title": "Летучий корабль",
+              "start": "2026-11-29T12:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/letuchij-korabl-29-11-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Найди спектакль «Это всё она» в Стерлитамаке 29 ноября с началом не раньше 19:01.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-11-29",
+          "category": "theatre",
+          "earliestStart": "19:01",
+          "excludes": [
+            {
+              "title": "Это всё она",
+              "start": "2026-11-29T19:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/eto-vsjo-ona-29-11-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Покажи спектакль «Ганди молчал по субботам» в Стерлитамаке 1 декабря, до 4000 рублей на двоих.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-12-01",
+          "category": "theatre",
+          "budget": 4000,
+          "partySize": 2,
+          "includes": [
+            {
+              "title": "Ганди молчал по субботам",
+              "start": "2026-12-01T19:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/gandi-molchal-po-subbotam-01-12-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Хочу на концерт «Музыка советского кино» на площадке Городской дворец культуры в Стерлитамаке 3 декабря с ребёнком 6 лет.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-12-03",
+          "category": "concert",
+          "childAge": 6,
+          "venue": "Городской дворец культуры",
+          "includes": [
+            {
+              "title": "Музыка советского кино в Стерлитамаке",
+              "start": "2026-12-03T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/muzyka-sovetskogo-kino-v-sterlitamake/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Ищу спектакль «Недоросль» в Стерлитамаке 5 декабря для ребёнка 12 лет. На троих есть 1649 рублей.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-12-05",
+          "category": "theatre",
+          "childAge": 12,
+          "budget": 1649,
+          "partySize": 3,
+          "excludes": [
+            {
+              "title": "Недоросль",
+              "start": "2026-12-05T18:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/nedorosl-05-12-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Найди спектакль «Кошкин дом» в Стерлитамаке 6 декабря для ребёнка 2 лет. Нужно закончить не позже 13:00.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-12-06",
+          "category": "theatre",
+          "childAge": 2,
+          "latestEnd": "13:00",
+          "includes": [
+            {
+              "title": "Кошкин дом",
+              "start": "2026-12-06T12:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/koshkin-dom-06-12-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Спектакль «Гроза» в Стерлитамаке 10 декабря. Мне нужно закончить не позже 21:29.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-12-10",
+          "category": "theatre",
+          "latestEnd": "21:29",
+          "excludes": [
+            {
+              "title": "Гроза",
+              "start": "2026-12-10T19:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/groza-10-12-2026"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Покажи спектакль «Маскарад» в Стерлитамаке 12 декабря. Цена до 600 рублей за билет, начало не раньше 18:00.",
+        "expect": {
+          "city": "Стерлитамак",
+          "date": "2026-12-12",
+          "category": "theatre",
+          "budget": 600,
+          "partySize": 1,
+          "earliestStart": "18:00",
+          "includes": [
+            {
+              "title": "Маскарад",
+              "start": "2026-12-12T18:00:00+05:00",
+              "source": "https://rusdramteatr.ru/afisha/maskarad-12-12-2026"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "regional",
+    "cases": [
+      {
+        "message": "Что из симфонической музыки есть вечером 8 декабря в Нефтекамске для шестилетки?",
+        "expect": {
+          "city": "Нефтекамск",
+          "date": "2026-12-08",
+          "category": "concert",
+          "childAge": 6,
+          "earliestStart": "17:00",
+          "status": "matches",
+          "includes": [
+            {
+              "title": "Концерт симфонической музыки. Рахманинов, Прокофьев",
+              "start": "2026-12-08T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/kontsert-simfonicheskoy-muzyki-rakhmaninov-prokofev/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Рахманинов и Прокофьев 8 декабря в Нефтекамске подойдут ребёнку пяти лет?",
+        "expect": {
+          "city": "Нефтекамск",
+          "date": "2026-12-08",
+          "childAge": 5,
+          "status": "no_results",
+          "excludes": [
+            {
+              "title": "Концерт симфонической музыки. Рахманинов, Прокофьев",
+              "start": "2026-12-08T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/kontsert-simfonicheskoy-muzyki-rakhmaninov-prokofev/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "В Нефтекамске 8 декабря ищу бесплатный симфонический концерт.",
+        "expect": {
+          "city": "Нефтекамск",
+          "date": "2026-12-08",
+          "category": "concert",
+          "free": true,
+          "status": "no_results",
+          "excludes": [
+            {
+              "title": "Концерт симфонической музыки. Рахманинов, Прокофьев",
+              "start": "2026-12-08T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/kontsert-simfonicheskoy-muzyki-rakhmaninov-prokofev/"
+            }
+          ],
+          "messageIncludes": "цена"
+        }
+      },
+      {
+        "message": "Где выступает Лена Василёк в Нефтекамске 20 ноября? Ищу концерт после шести вечера.",
+        "expect": {
+          "city": "Нефтекамск",
+          "date": "2026-11-20",
+          "category": "concert",
+          "earliestStart": "18:00",
+          "status": "matches",
+          "includes": [
+            {
+              "title": "Лена Василёк",
+              "start": "2026-11-20T19:00:00+05:00",
+              "source": "https://afishagorodov.ru/neftekamsk/events/lena-vasilek-a9416be6ce3f997995c4a511/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Балет «Щелкунчик» в Нефтекамске 13 декабря, не дороже 2000 рублей за два билета.",
+        "expect": {
+          "city": "Нефтекамск",
+          "date": "2026-12-13",
+          "category": "theatre",
+          "partySize": 2,
+          "budget": 2000,
+          "status": "matches",
+          "includes": [
+            {
+              "title": "Щелкунчик",
+              "start": "2026-12-13T18:00:00+05:00",
+              "source": "https://afishagorodov.ru/neftekamsk/events/schelkunchik-ceb096820a772c33ac3e0eac/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Два билета на «Щелкунчика» в Нефтекамске 13 декабря обойдутся максимум в 1999 рублей?",
+        "expect": {
+          "city": "Нефтекамск",
+          "date": "2026-12-13",
+          "partySize": 2,
+          "budget": 1999,
+          "status": "no_results",
+          "excludes": [
+            {
+              "title": "Щелкунчик",
+              "start": "2026-12-13T18:00:00+05:00",
+              "source": "https://afishagorodov.ru/neftekamsk/events/schelkunchik-ceb096820a772c33ac3e0eac/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Что есть из концертов в Нефтекамске 28 ноября с началом не раньше половины десятого вечера?",
+        "expect": {
+          "city": "Нефтекамск",
+          "date": "2026-11-28",
+          "category": "concert",
+          "status": "matches",
+          "includes": [
+            {
+              "title": "Татаро-башкирская чак-чак дискотека",
+              "start": "2026-11-28T22:00:00+05:00",
+              "source": "https://afishagorodov.ru/neftekamsk/events/tataro-bashkirskaya-chak-chak-diskoteka-5eebb66eeb4c88f6b3e1917c/"
+            }
+          ],
+          "earliestStart": "21:30"
+        }
+      },
+      {
+        "message": "Концерт 28 ноября в Нефтекамске, начало после 22:01.",
+        "expect": {
+          "city": "Нефтекамск",
+          "date": "2026-11-28",
+          "category": "concert",
+          "earliestStart": "22:01",
+          "status": "no_results",
+          "excludes": [
+            {
+              "title": "Татаро-башкирская чак-чак дискотека",
+              "start": "2026-11-28T22:00:00+05:00",
+              "source": "https://afishagorodov.ru/neftekamsk/events/tataro-bashkirskaya-chak-chak-diskoteka-5eebb66eeb4c88f6b3e1917c/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Поищи в Октябрьском классический концерт 16 ноября, начало с 19:00, ребёнку 6 лет.",
+        "expect": {
+          "city": "Октябрьский",
+          "date": "2026-11-16",
+          "category": "concert",
+          "earliestStart": "19:00",
+          "childAge": 6,
+          "status": "matches",
+          "includes": [
+            {
+              "title": "Шедевры мировой классики в Октябрьском",
+              "start": "2026-11-16T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/shedevry-pozdnego-romantizma-i-impressionizma-v-oktyabrskom/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "С ребёнком пяти лет на классический концерт 16 ноября в Октябрьском.",
+        "expect": {
+          "city": "Октябрьский",
+          "date": "2026-11-16",
+          "category": "concert",
+          "childAge": 5,
+          "status": "no_results",
+          "excludes": [
+            {
+              "title": "Шедевры мировой классики в Октябрьском",
+              "start": "2026-11-16T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/shedevry-pozdnego-romantizma-i-impressionizma-v-oktyabrskom/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Есть ли в Октябрьском 16 ноября концерт классической музыки строго после 19:01?",
+        "expect": {
+          "city": "Октябрьский",
+          "date": "2026-11-16",
+          "category": "concert",
+          "earliestStart": "19:01",
+          "status": "no_results",
+          "excludes": [
+            {
+              "title": "Шедевры мировой классики в Октябрьском",
+              "start": "2026-11-16T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/shedevry-pozdnego-romantizma-i-impressionizma-v-oktyabrskom/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Нужен концерт в Октябрьском 16 ноября, чтобы закончился не позже 21:30.",
+        "expect": {
+          "city": "Октябрьский",
+          "date": "2026-11-16",
+          "category": "concert",
+          "latestEnd": "21:30",
+          "status": "no_results",
+          "excludes": [
+            {
+              "title": "Шедевры мировой классики в Октябрьском",
+              "start": "2026-11-16T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/shedevry-pozdnego-romantizma-i-impressionizma-v-oktyabrskom/"
+            }
+          ],
+          "messageIncludes": "время окончания"
+        }
+      },
+      {
+        "message": "Тогда в Октябрьском.",
+        "expect": {
+          "city": "Октябрьский",
+          "date": "2026-11-16",
+          "category": "concert",
+          "childAge": 6,
+          "status": "matches",
+          "includes": [
+            {
+              "title": "Шедевры мировой классики в Октябрьском",
+              "start": "2026-11-16T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/shedevry-pozdnego-romantizma-i-impressionizma-v-oktyabrskom/"
+            }
+          ]
+        },
+        "context": {
+          "city": "Салават",
+          "date": "2026-11-16",
+          "category": "concert",
+          "childAge": 6
+        }
+      },
+      {
+        "message": "«Далан» в Салавате 20 ноября, на троих готовы потратить 1800 рублей.",
+        "expect": {
+          "city": "Салават",
+          "date": "2026-11-20",
+          "partySize": 3,
+          "budget": 1800,
+          "status": "matches",
+          "includes": [
+            {
+              "title": "Далан. 25 лет с Вами",
+              "start": "2026-11-20T19:00:00+05:00",
+              "source": "https://afishagorodov.ru/salavat/events/dalan-25-let-s-vami-154215831a5a1013e45d0e78/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "«Далан» в Салавате 20 ноября, общий бюджет на троих 1799 рублей.",
+        "expect": {
+          "city": "Салават",
+          "date": "2026-11-20",
+          "partySize": 3,
+          "budget": 1799,
+          "status": "no_results",
+          "excludes": [
+            {
+              "title": "Далан. 25 лет с Вами",
+              "start": "2026-11-20T19:00:00+05:00",
+              "source": "https://afishagorodov.ru/salavat/events/dalan-25-let-s-vami-154215831a5a1013e45d0e78/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "В Салавате 26 ноября ищу концерт классики, начало с 19:00.",
+        "expect": {
+          "city": "Салават",
+          "date": "2026-11-26",
+          "category": "concert",
+          "earliestStart": "19:00",
+          "status": "matches",
+          "includes": [
+            {
+              "title": "Шедевры мировой классики в Салавате",
+              "start": "2026-11-26T19:00:00+05:00",
+              "source": "https://gasorb.ru/affiche/shedevry-mirovoy-klassiki-v-salavate/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Спектакль «Свидание на четверых» в Салавате 27 ноября, подростку 16 лет, два билета до 2400 рублей.",
+        "expect": {
+          "city": "Салават",
+          "date": "2026-11-27",
+          "category": "theatre",
+          "childAge": 16,
+          "partySize": 2,
+          "budget": 2400,
+          "status": "matches",
+          "includes": [
+            {
+              "title": "Свидание на четверых",
+              "start": "2026-11-27T19:00:00+05:00",
+              "source": "https://afishagorodov.ru/salavat/events/svidanie-na-chetveryh-d46b659bf523a2508e3d34e9/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "А если подростку 15 лет?",
+        "expect": {
+          "city": "Салават",
+          "date": "2026-11-27",
+          "category": "theatre",
+          "childAge": 15,
+          "partySize": 2,
+          "budget": 2400,
+          "status": "no_results",
+          "excludes": [
+            {
+              "title": "Свидание на четверых",
+              "start": "2026-11-27T19:00:00+05:00",
+              "source": "https://afishagorodov.ru/salavat/events/svidanie-na-chetveryh-d46b659bf523a2508e3d34e9/"
+            }
+          ]
+        },
+        "context": {
+          "city": "Салават",
+          "date": "2026-11-27",
+          "category": "theatre",
+          "childAge": 16,
+          "partySize": 2,
+          "budget": 2400,
+          "query": "Свидание на четверых"
+        }
+      },
+      {
+        "message": "Что есть 8 декабря в Салавате из концертов для шестилетнего ребёнка, до 900 рублей за билет?",
+        "expect": {
+          "city": "Салават",
+          "date": "2026-12-08",
+          "category": "concert",
+          "childAge": 6,
+          "budget": 900,
+          "status": "matches",
+          "includes": [
+            {
+              "title": "Марат Яруллин",
+              "start": "2026-12-08T19:00:00+05:00",
+              "source": "https://afishagorodov.ru/salavat/events/marat-yarullin-201833284d1769c6a57a8c12/"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Хочу на Павла Дедищева в Салавате 3 февраля 2027 года. Подойдёт начало с 20:00.",
+        "expect": {
+          "city": "Салават",
+          "date": "2027-02-03",
+          "earliestStart": "20:00",
+          "status": "matches",
+          "includes": [
+            {
+              "title": "Павел Дедищев. Стендап",
+              "start": "2027-02-03T20:00:00+05:00",
+              "source": "https://afishagorodov.ru/salavat/events/pavel-dedischev-stendap-3c0513ef8890a9dfab8be31a/"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    "name": "ufa-cinema",
+    "cases": [
+      {
+        "message": "Фильм «МУЛЬТ в кино. Выпуск №201» 15 ноября в Уфе для ребёнка 4 лет, до 240 рублей на двоих.",
+        "expect": {
+          "city": "Уфа",
+          "category": "cinema",
+          "date": "2026-11-15",
+          "childAge": 4,
+          "budget": 240,
+          "partySize": 2,
+          "includes": [
+            {
+              "title": "МУЛЬТ в кино. Выпуск №201. Цифровая азбука с Бодо Бородо",
+              "start": "2026-11-15T10:55:00+05:00",
+              "source": "https://kinoteatr.ru/raspisanie-kinoteatrov/ufa/galereya-art/?date=2026-11-15"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Фильм «МУЛЬТ в кино. Выпуск №201» 15 ноября в Уфе за 239 рублей на двоих или дешевле.",
+        "expect": {
+          "city": "Уфа",
+          "category": "cinema",
+          "date": "2026-11-15",
+          "excludes": [
+            {
+              "title": "МУЛЬТ в кино. Выпуск №201. Цифровая азбука с Бодо Бородо",
+              "start": "2026-11-15T10:55:00+05:00",
+              "source": "https://kinoteatr.ru/raspisanie-kinoteatrov/ufa/galereya-art/?date=2026-11-15"
+            }
+          ],
+          "status": "no_results"
+        }
+      },
+      {
+        "message": "Фильм «Чудо-Юдо» в Уфе 15 ноября для ребёнка 5 лет.",
+        "expect": {
+          "city": "Уфа",
+          "category": "cinema",
+          "date": "2026-11-15",
+          "childAge": 5,
+          "excludes": [
+            {
+              "title": "Чудо-Юдо",
+              "start": "2026-11-15T10:05:00+05:00",
+              "source": "https://kinoteatr.ru/raspisanie-kinoteatrov/ufa/galereya-art/?date=2026-11-15"
+            }
+          ],
+          "status": "no_results"
+        }
+      },
+      {
+        "message": "Фильм «Чудо-Юдо» в Уфе 15 ноября с ребёнком 6 лет до 420 рублей на двоих.",
+        "expect": {
+          "city": "Уфа",
+          "category": "cinema",
+          "date": "2026-11-15",
+          "childAge": 6,
+          "budget": 420,
+          "partySize": 2,
+          "includes": [
+            {
+              "title": "Чудо-Юдо",
+              "start": "2026-11-15T10:05:00+05:00",
+              "source": "https://kinoteatr.ru/raspisanie-kinoteatrov/ufa/galereya-art/?date=2026-11-15"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Мультфильм «Приключения Мамонтёнка» в Уфе 15 ноября с ребёнком 6 лет до 210 рублей, начало не раньше 10:05.",
+        "expect": {
+          "city": "Уфа",
+          "category": "cinema",
+          "date": "2026-11-15",
+          "childAge": 6,
+          "budget": 210,
+          "earliestStart": "10:05",
+          "includes": [
+            {
+              "title": "Приключения Мамонтёнка. В поисках мамы",
+              "start": "2026-11-15T10:05:00+05:00",
+              "source": "https://kinoteatr.ru/raspisanie-kinoteatrov/ufa/semya/?date=2026-11-15"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Мультфильм «Турбозавры» в Уфе 15 ноября с ребёнком 5 лет до 290 рублей.",
+        "expect": {
+          "city": "Уфа",
+          "category": "cinema",
+          "date": "2026-11-15",
+          "childAge": 5,
+          "budget": 290,
+          "includes": [
+            {
+              "title": "Турбозавры. Суперфильм",
+              "start": "2026-11-15T15:00:00+05:00",
+              "source": "https://kinoteatr.ru/raspisanie-kinoteatrov/ufa/semya/?date=2026-11-15"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Мультфильм «Турбозавры» в Уфе 15 ноября, чтобы закончилось не позже 18:00.",
+        "expect": {
+          "city": "Уфа",
+          "category": "cinema",
+          "date": "2026-11-15",
+          "latestEnd": "18:00",
+          "status": "no_results",
+          "excludes": [
+            {
+              "title": "Турбозавры. Суперфильм",
+              "start": "2026-11-15T15:00:00+05:00",
+              "source": "https://kinoteatr.ru/raspisanie-kinoteatrov/ufa/semya/?date=2026-11-15"
+            }
+          ],
+          "messageIncludes": "время окончания"
+        }
+      },
+      {
+        "message": "Кино «Чудо-Юдо» в Уфе 15 ноября только бесплатно.",
+        "expect": {
+          "city": "Уфа",
+          "category": "cinema",
+          "date": "2026-11-15",
+          "free": true,
+          "status": "no_results",
+          "excludes": [
+            {
+              "title": "Чудо-Юдо",
+              "start": "2026-11-15T10:05:00+05:00",
+              "source": "https://kinoteatr.ru/raspisanie-kinoteatrov/ufa/galereya-art/?date=2026-11-15"
+            }
+          ]
+        }
+      },
+      {
+        "message": "Хочу в кино в Уфе 15 ноября с ребёнком 6 лет, 500 рублей на двоих, нравятся мультфильмы про животных.",
+        "expect": {
+          "city": "Уфа",
+          "category": "cinema",
+          "date": "2026-11-15",
+          "childAge": 6,
+          "budget": 500,
+          "partySize": 2,
+          "status": "matches"
+        },
+        "recommendation": true
+      },
+      {
+        "message": "Подскажите концерт в Салавате 26 ноября 2026 года. Люблю классическую музыку в живом исполнении.",
+        "expect": {
+          "city": "Салават",
+          "category": "concert",
+          "date": "2026-11-26",
+          "status": "matches"
+        }
+      }
+    ]
+  },
+  {
+    "name": "recommendations",
+    "cases": [
+      {
+        "message": "Хочу сходить в театр в Уфе на ближайшую неделю. Предпочитаю лёгкие комедии.",
+        "expect": {
+          "city": "Уфа",
+          "category": "theatre",
+          "status": "matches"
+        },
+        "recommendation": true
+      },
+      {
+        "message": "Посоветуйте концерт в Уфе на ближайшую неделю. Люблю живую классическую музыку.",
+        "expect": {
+          "city": "Уфа",
+          "category": "concert",
+          "status": "matches"
+        },
+        "recommendation": true
+      },
+      {
+        "message": "Хочу сходить в кинотеатр с ребёнком в эти выходные, но не знаю, на какой фильм.",
+        "expect": {
+          "category": "cinema",
+          "status": "clarify",
+          "messageIncludes": "Сколько лет"
+        }
+      },
+      {
+        "message": "Ему двенадцать",
+        "context": {
+          "category": "cinema",
+          "child": true
+        },
+        "expect": {
+          "category": "cinema",
+          "childAge": 12,
+          "status": "clarify",
+          "messageIncludes": "городе"
+        }
+      },
+      {
+        "message": "Не кино, а спектакль в Уфе 15 ноября.",
+        "context": {
+          "category": "cinema",
+          "city": "Уфа"
+        },
+        "expect": {
+          "city": "Уфа",
+          "category": "theatre",
+          "date": "2026-11-15",
+          "status": "matches"
+        }
+      }
+    ]
+  }
+]

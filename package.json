@@ -3,8 +3,13 @@
   "version": "0.2.0",
   "private": true,
   "type": "module",
-  "workspaces": ["apps/*", "packages/*"],
-  "engines": { "node": ">=24.15" },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=24.15"
+  },
   "scripts": {
     "dev": "node --env-file-if-exists=.env scripts/dev.ts",
     "start": "npm run dev",
@@ -14,7 +19,15 @@
     "build": "vite build --config apps/web/vite.config.ts",
     "refresh": "node --env-file-if-exists=.env apps/api/src/refresh.ts",
     "typecheck": "tsc --noEmit",
-    "test": "node --test apps/*/test/*.test.ts"
+    "test": "node --test apps/*/test/*.test.ts",
+    "test:e2e": "node scripts/test-search-e2e.mjs",
+    "migrate:catalog": "node --env-file-if-exists=.env apps/api/src/migrate.ts",
+    "test:e2e:accounts": "node scripts/test-accounts-e2e.mjs"
   },
-  "devDependencies": { "@types/node": "24.19.2", "typescript": "7.0.2" }
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "@types/pg": "8.23.1",
+    "playwright": "1.58.2",
+    "typescript": "7.0.2"
+  }
 }

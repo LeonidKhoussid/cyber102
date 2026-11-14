@@ -44,6 +44,15 @@ test('theater batches public JSON and matches schedule IDs, weekday, source link
   const result = await collectYouthTheater(async address => {
     const url = new URL(address);
     if (url.pathname === '/robots.txt') return 'User-agent: *\nAllow: /';
+    if (url.origin === 'https://ufa.kassy.ru') {
+      assert.equal(url.pathname, '/venue/nacionalnyjj-molodezhnyjj-teatr-im-m-karima-16/');
+      return '<ul class="dl-data"><li>Адрес: 450008, Уфа, ул. Ленина, 62</li></ul><ul class="events">' +
+        ['16 ноября 2026 12:00', '15 ноября 2026 12:00'].map((date, index) => `<li>
+          <h2><a class="event_link" href="/events/teatr/40-${index + 1}/">Спектакль</a></h2>
+          <p class="venue"><a href="${url.pathname}">Национальный молодежный театр им. М.Карима +</a>, Камерный зал, ${date}</p>
+          <div class="price_line"><p>Билеты в наличии: ${index === 1 ? '450 — 1 000' : '900'} <i aria-hidden="true">&#xf158;</i></p></div>
+        </li>`).join('') + '</ul>';
+    }
     if (url.pathname === '/afisha/') return card(42, 'Воскресенье') + card(43, 'Суббота');
     assert.equal(url.pathname, '/wp-json/wp/v2/new-spectacle');
     assert.equal(url.searchParams.get('include'), '42');
@@ -54,7 +63,9 @@ test('theater batches public JSON and matches schedule IDs, weekday, source link
   assert.equal(result.events[0].sourceType, 'api');
   assert.equal(result.events[0].ageLimit, 3);
   assert.equal(result.events[0].endsAt, '2026-11-15T07:35:00.000Z');
-  assert.equal(result.events[0].priceMin, undefined);
+  assert.equal(result.events[0].priceMin, 450);
+  assert.equal(result.events[0].priceMax, 1000);
+  assert.equal(result.events[0].ticketUrl, 'https://ufa.kassy.ru/events/teatr/40-2/');
 });
 
 test('regional listings keep verified local detail, respect robots and isolate a failed city', async () => {
@@ -150,6 +161,31 @@ test('the refresh imports a completed source during another source failure and p
   } finally {
     catalog.close();
   }
+});
+
+test('crawler respects rules behind a same-site robots redirect and refuses other redirects', async () => {
+  const origin = 'https://example.org';
+  const requests: string[] = [];
+  const read = sourceReader(async (input, options) => {
+    const path = new URL(String(input)).pathname;
+    requests.push(path);
+    if (path === '/robots.txt') {
+      assert.equal(options?.redirect, 'manual');
+      return new Response(null, { status: 302, headers: { location: '/crawler-policy.txt' } });
+    }
+    if (path === '/crawler-policy.txt') return new Response('User-agent: *\nDisallow: /blocked');
+    assert.equal(options?.redirect, 'error');
+    return new Response('listing');
+  });
+  const crawler = await openCrawler(origin, read);
+  await assert.rejects(crawler.page(new URL(origin + '/blocked')), /disallows/);
+  assert.equal(await crawler.page(new URL(origin + '/listing')), 'listing');
+  assert.deepEqual(requests, ['/robots.txt', '/crawler-policy.txt', '/listing']);
+  const external = sourceReader(async input => {
+    assert.equal(String(input), origin + '/robots.txt');
+    return new Response(null, { status: 302, headers: { location: 'https://other.example/robots.txt' } });
+  });
+  await assert.rejects(openCrawler(origin, external), /leaves source origin/);
 });
 
 test('transport retries a timeout once and does not retry forbidden responses', async () => {

@@ -4,11 +4,14 @@ import type { SourceEvent } from './catalog.ts';
 import { isLocalDate, normalizeText } from './catalog.ts';
 import { openCrawler } from './crawl.ts';
 import type { Read } from './crawl.ts';
+import { localDay } from './filters.ts';
 import { category, clean, eventNotice, publicPage, record } from './source-data.ts';
 import type { SourceResult } from './source-data.ts';
 
 const theater = 'https://teatrnmt.ru';
-const theaterName = 'Национальный молодёжный театр имени Мустая Карима';
+export const theaterName = 'Национальный молодёжный театр имени Мустая Карима';
+const theaterTicketOrigin = 'https://ufa.kassy.ru';
+const theaterTicketVenue = '/venue/nacionalnyjj-molodezhnyjj-teatr-im-m-karima-16/';
 const library = 'https://lib-str.ru';
 const libraryName = 'Централизованная библиотечная система Стерлитамака';
 const months = 'января февраля марта апреля мая июня июля августа сентября октября ноября декабря'.split(' ');
@@ -46,6 +49,45 @@ function durationOf(text: string): number | undefined {
   return minutes > 0 && minutes <= 600 ? minutes : undefined;
 }
 
+type TheaterOffer = { priceMin: number; priceMax: number; ticketUrl: string };
+
+function theaterSessionKey(title: string, startsAt: string) {
+  return `${startsAt}:${normalizeText(title)}`;
+}
+
+async function youthTheaterOffers(read: Read) {
+  const crawler = await openCrawler(theaterTicketOrigin, read);
+  const page = load(await crawler.page(new URL(theaterTicketVenue, theaterTicketOrigin)));
+  const offers = new Map<string, TheaterOffer | undefined>();
+  if (!/\b450008\b.*уфа.*ленина\s+62(?= |$)/u.test(normalizeText(page('.dl-data').first().text()))) return offers;
+  for (const node of page('ul.events > li').toArray()) {
+    const item = page(node);
+    const titleLink = item.find('h2 a.event_link');
+    const title = clean(titleLink.text());
+    const ticketUrl = titleLink.length === 1 && publicPage(titleLink.attr('href'), theaterTicketOrigin, /^\/events\/teatr\/\d+-\d+\/$/);
+    const venue = item.find('p.venue');
+    if (!title || !ticketUrl || !crawler.allowed(ticketUrl) || venue.length !== 1 ||
+        venue.find('a').first().attr('href') !== theaterTicketVenue) continue;
+    const date = /(\d{1,2})\s+([а-я]+)\s+(\d{4})\s+(\d{1,2}):([0-5]\d)(?:\s|$)/iu.exec(clean(venue.text()) ?? '');
+    if (!date) continue;
+    const monthsIndex = months.indexOf(date[2].toLowerCase());
+    if (monthsIndex < 0) continue;
+    const startsAt = timestamp(`${date[3]}-${String(monthsIndex + 1).padStart(2, '0')}-${date[1].padStart(2, '0')}`, date[4], date[5]);
+    // The seller may include restrictions and discounts elsewhere in the card. Read only the published range.
+    const priceLine = item.find('.price_line > p').clone();
+    priceLine.find('i[aria-hidden="true"]').remove();
+    const price = /^Билеты в наличии:\s*(\d+(?: \d{3})*)(?:\s*[-–—]\s*(\d+(?: \d{3})*))?$/iu
+      .exec(clean(priceLine.text()) ?? '');
+    if (!startsAt || !price) continue;
+    const priceMin = Number(price[1].replaceAll(' ', ''));
+    const priceMax = Number((price[2] ?? price[1]).replaceAll(' ', ''));
+    if (!Number.isFinite(priceMin) || !Number.isFinite(priceMax) || priceMin <= 0 || priceMax < priceMin) continue;
+    const key = theaterSessionKey(title, startsAt);
+    offers.set(key, offers.has(key) ? undefined : { priceMin, priceMax, ticketUrl: ticketUrl.href });
+  }
+  return offers;
+}
+
 export async function collectYouthTheater(read: Read, now: Date): Promise<SourceResult> {
   const result: SourceResult = { name: theaterName, events: [], rejected: 0 };
   const crawler = await openCrawler(theater, read);
@@ -64,6 +106,7 @@ export async function collectYouthTheater(read: Read, now: Date): Promise<Source
   });
   const byId = new Map<string, Record<string, unknown>>();
   const ids = [...new Set(sessions.map(session => session.id))];
+  const offersRequest = ids.length ? youthTheaterOffers(read).catch(() => undefined) : undefined;
   for (let index = 0; index < ids.length; index += 60) {
     const batch = ids.slice(index, index + 60);
     const api = new URL('/wp-json/wp/v2/new-spectacle', theater);
@@ -85,6 +128,7 @@ export async function collectYouthTheater(read: Read, now: Date): Promise<Source
     dates.add(session.startsAt);
     datesById.set(session.id, dates);
   }
+  const offers = await offersRequest;
   const emitted = new Set<string>();
   for (const session of sessions) {
     const post = byId.get(session.id);
@@ -97,20 +141,63 @@ export async function collectYouthTheater(read: Read, now: Date): Promise<Source
     const content = load(String(record(post.content).rendered ?? ''));
     const lines = content('p').map((_index, paragraph) => clean(content(paragraph).text()) ?? '').get();
     const ageLine = lines.find(line => /возрастное ограничение/i.test(line));
+    const synopsis = lines.find(line => line.length >= 70 && !/возрастное ограничение|продолжительность|стоимость|купить билет/iu.test(line));
     const status = eventNotice(title, ...session.fields, ...lines);
     const duration = durationOf(session.fields.join(' ')) ?? durationOf(lines.join(' '));
+    const offer = status === 'published' ? offers?.get(theaterSessionKey(title, session.startsAt)) : undefined;
     const key = session.id + ':' + session.startsAt;
     if (emitted.has(key)) continue;
     emitted.add(key);
     result.events.push({
       title, category: 'theatre', city: 'Уфа', venue: theaterName, address: 'ул. Ленина, 62',
+      description: synopsis?.slice(0, 500),
       startsAt: session.startsAt, endsAt: duration ? new Date(Date.parse(session.startsAt) + duration * 60_000).toISOString() : undefined,
       ageLimit: ageLine ? ageOf(ageLine) : undefined,
+      ...offer,
       sourceUrl: session.link.href, sourceName: theaterName, sourceType: 'api', sourceKey: 'youth-theater:' + session.id,
-      status, verifiedAt: now.toISOString(), raw: { post, schedule: session.fields },
+      status, verifiedAt: now.toISOString(), raw: { post, schedule: session.fields, offer },
     });
   }
   return result;
+}
+
+// One announced time can apply to a day, a list of days, or a range of days.
+function* libraryDays(days: string, month: string, year: string): Generator<string> {
+  for (const segment of days.split(/\s*(?:и|,)\s*/u)) {
+    const [first, last] = segment.split(/\s*[-–—]\s*/u);
+    const toDate = (value: string) => {
+      const [day, specifiedMonth = month] = value.split('.');
+      return `${year}-${specifiedMonth}-${day}`;
+    };
+    const end = toDate(last ?? first);
+    const start = toDate(first);
+    if (!isLocalDate(start) || !isLocalDate(end) || start > end || localDay(start, 31) < end) continue;
+    for (let date = start; date <= end; date = localDay(date, 1)) yield date;
+  }
+}
+
+type Opening = { day: number; untilDay: number; start: string; end: string; breakStart?: string; breakEnd?: string };
+
+function libraryHours(html: string) {
+  const page = load(html);
+  return page('table tr').toArray().flatMap(row => {
+    const cells = page(row).children('td');
+    if (cells.length !== 4) return [];
+    const branch = /библиотека[\s-]*филиал\s*№\s*(\d+)/iu.exec(cells.eq(0).text())?.[1];
+    const label = clean(cells.eq(0).text()) ?? '';
+    const venue = branch ? '№' + branch : /^отдел работы с читателями$/iu.test(label) ? 'городская'
+      : /^центральная детская/u.test(normalizeText(label)) ? 'детская' : undefined;
+    const address = clean(cells.eq(1).find('p').first().text() || cells.eq(1).text());
+    if (!venue || !address) return [];
+    const text = (clean(cells.eq(3).text()) ?? '').toLowerCase();
+    const dayNames = weekdays.join('|');
+    const clock = '(\\d{1,2}[:.][0-5]\\d)';
+    const hours = new RegExp(`(${dayNames})(?:\\s*[-–—]\\s*(${dayNames}))?\\s+с\\s+${clock}(?:\\s*ч\\.)?\\s+до\\s+${clock}(?:\\s*ч\\.)?(?:\\s+перерыв\\s+с\\s+${clock}\\s+до\\s+${clock})?`, 'gu');
+    const openings: Opening[] = [...text.matchAll(hours)].map(([, first, last, start, end, breakStart, breakEnd]) => ({
+      day: weekdays.indexOf(first), untilDay: weekdays.indexOf(last ?? first), start, end, breakStart, breakEnd,
+    }));
+    return [{ venue, address: normalizeText(address), openings }];
+  });
 }
 
 export async function collectLibrary(read: Read, now: Date): Promise<SourceResult> {
@@ -120,6 +207,9 @@ export async function collectLibrary(read: Read, now: Date): Promise<SourceResul
   const page = load(await crawler.page(url));
   const tables = page('table').filter((_index, table) => /Дата и время проведения/i.test(page(table).find('tr').first().text()));
   if (!tables.length) throw new Error('Expected a dated library schedule');
+  const hoursPage = new URL('/grafik-raboty/', library);
+  let hours: ReturnType<typeof libraryHours> | undefined;
+  const announced = /(\d{2}(?:\.\d{2})?(?:\s*(?:[-–—]|и|,)\s*\d{2}(?:\.\d{2})?)*?)\.(\d{2})\.(\d{4})\s*г\.?\s+(?:(\d{1,2}[.:][0-5]\d)(?:\s*[-–—]\s*(\d{1,2}[.:][0-5]\d))?|(?=(в часы работы библиотеки)))/giu;
   for (const row of tables.find('tr').toArray()) {
     const fields = page(row).children('td').map((_index, cell) => clean(page(cell).text()) ?? '').get();
     if (fields.length !== 5 || !/^\d+\.$/.test(fields[0])) continue;
@@ -129,25 +219,64 @@ export async function collectLibrary(read: Read, now: Date): Promise<SourceResul
     const title = clean(label.replace(/(?:\s+Участвует в программе|\s+По предварительной записи|\s+\d{1,2}\s*\+).*$/iu, ''));
     const location = /^(.+?)(?:\s+\(([^()]+)\))?$/.exec(place);
     if (!title || !location) { result.rejected++; continue; }
+    const [, venue, address] = location;
+    const type = category(title);
+    const appointment = /по предварительной записи(?:\s*\([^)]*\))?/iu.exec(label)?.[0];
     const prices = [...cost.matchAll(/(\d[\d ]*)\s*руб/giu)].map(match => Number(match[1].replaceAll(' ', '')));
     const free = /^бесплатно\.?$/iu.test(cost);
-    const times = [...schedule.matchAll(/(?<![\d–—-])(\d{2})\.(\d{2})\.(\d{4})\s*г\.?\s+(\d{1,2})[.:]([0-5]\d)(?:\s*[-–—]\s*(\d{1,2})[.:]([0-5]\d))?/giu)];
+    const times = [...schedule.matchAll(announced)];
     if (!times.length) { result.rejected++; continue; }
-    for (const [, day, month, year, hour, minute, endHour, endMinute] of times) {
-      const date = `${year}-${month}-${day}`;
-      const startsAt = timestamp(date, hour, minute);
-      if (!startsAt || Date.parse(startsAt) <= now.getTime()) continue;
-      const endsAt = endHour ? timestamp(date, endHour, endMinute) : undefined;
-      const venue = location[1].trim();
-      const key = createHash('sha256').update(JSON.stringify([normalizeText(title), normalizeText(venue), startsAt])).digest('hex');
-      result.events.push({
-        title, category: category(title), city: 'Стерлитамак', venue, address: location[2],
-        startsAt, endsAt: endsAt && Date.parse(endsAt) > Date.parse(startsAt) ? endsAt : undefined, ageLimit,
-        priceMin: free ? 0 : prices.length ? Math.min(...prices) : undefined,
-        priceMax: free ? 0 : prices.length ? Math.max(...prices) : undefined,
-        sourceUrl: url.href, sourceName: libraryName, sourceType: 'scrape', sourceKey: 'sterlitamak-library:' + key,
-        status: eventNotice(title, label, schedule), verifiedAt: now.toISOString(), raw: fields,
-      });
+    for (const [, days, month, year, start, end, duringHours] of times) {
+      let branch: ReturnType<typeof libraryHours>[number] | undefined;
+      if (duringHours) {
+        if (!address || (!appointment && type !== 'exhibition')) { result.rejected++; continue; }
+        if (!hours) {
+          try {
+            hours = libraryHours(await crawler.page(hoursPage));
+            if (!hours.length) throw new Error('Expected official library opening hours');
+          } catch (error) {
+            hours = [];
+            result.error = error instanceof Error ? error.message : 'Library opening hours unavailable';
+          }
+        }
+        const branchId = /№\s*(\d+)/u.exec(venue)?.[1];
+        const name = normalizeText(venue);
+        const libraryId = branchId ? '№' + branchId : name === 'центральная городская библиотека' ? 'городская'
+          : name === 'центральная детская библиотека' ? 'детская' : undefined;
+        branch = hours.find(item => item.venue === libraryId && item.address === normalizeText(address));
+        if (!branch) { result.rejected++; continue; }
+      }
+      for (const date of new Set(libraryDays(days, month, year))) {
+        const weekday = new Date(date + 'T12:00:00Z').getUTCDay();
+        const opening = branch?.openings.find(item => item.day === weekday && item.untilDay === weekday)
+          ?? branch?.openings.find(item => weekday >= item.day && weekday <= item.untilDay);
+        if (duringHours && !opening) continue;
+        const windows = opening?.breakStart && opening.breakEnd && !appointment
+          ? [[opening.start, opening.breakStart], [opening.breakEnd, opening.end]]
+          : [[opening?.start ?? start, appointment && duringHours ? undefined : opening?.end ?? end]];
+        for (const [windowStart, windowEnd] of windows) {
+          const at = (clock: string | undefined) => {
+            if (!clock) return;
+            const [hour, minute] = clock.split(/[.:]/u);
+            return timestamp(date, hour, minute);
+          };
+          const startsAt = at(windowStart);
+          const endsAt = at(windowEnd);
+          if (!startsAt || Date.parse(endsAt ?? startsAt) <= now.getTime() || (endsAt && endsAt <= startsAt)) continue;
+          const key = createHash('sha256').update(JSON.stringify([normalizeText(title), normalizeText(venue), startsAt])).digest('hex');
+          const description = opening && appointment
+            ? `${appointment}. Время визита уточняйте у библиотеки. Часы работы: ${opening.start}–${opening.end}.`
+            : appointment || (opening ? 'Вход в часы работы библиотеки.' : undefined);
+          result.events.push({
+            title, category: type, city: 'Стерлитамак', venue, address, description,
+            startsAt, endsAt, ageLimit,
+            priceMin: free ? 0 : prices.length ? Math.min(...prices) : undefined,
+            priceMax: free ? 0 : prices.length ? Math.max(...prices) : undefined,
+            sourceUrl: url.href, sourceName: libraryName, sourceType: 'scrape', sourceKey: 'sterlitamak-library:' + key,
+            status: eventNotice(title, label, schedule), verifiedAt: now.toISOString(), raw: fields,
+          });
+        }
+      }
     }
   }
   return result;

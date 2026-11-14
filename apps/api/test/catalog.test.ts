@@ -55,6 +55,46 @@ test('treats unknown prices as unknown and reads CSV with valid zero price', () 
   }
 });
 
+test('discovery relevance resolves inflected titles and ranks title hits ahead of descriptions', () => {
+  const catalog = openCatalog(':memory:', () => now);
+  try {
+    catalog.importEvents([
+      { ...record, sourceKey: 'description', title: 'Большой зимний концерт', description: 'В программе музыка из Щелкунчика' },
+      { ...record, sourceKey: 'title', title: 'Балет «Щелкунчик»', startsAt: '2026-11-15T19:00:00+05:00', endsAt: undefined },
+      { ...record, sourceKey: 'other-city', title: 'Щелкунчик', city: 'Салават' },
+      { ...record, sourceKey: 'other-title', title: 'Балет «Лебединое озеро»' },
+      { ...record, sourceKey: 'speaker', title: 'Павел Дедищев. Стендап' },
+    ]);
+    const filters = { city: 'Уфа', query: 'Щелкунчика', sort: 'relevance' } as const;
+    const page = catalog.search({ ...filters, limit: 1 });
+    assert.equal(page.total, 2);
+    assert.equal(page.events[0]?.title, 'Балет «Щелкунчик»');
+    assert.equal(catalog.search({ ...filters, limit: 1, page: 2 }).events[0]?.title, 'Большой зимний концерт');
+    assert.deepEqual(catalog.search({ ...filters, sort: 'date', matchWords: true }).events.map(event => event.title),
+      ['Большой зимний концерт', 'Балет «Щелкунчик»']);
+    assert.deepEqual(catalog.search({ ...filters, query: 'Щелукнчик' }).events.map(event => event.title), ['Балет «Щелкунчик»']);
+    assert.deepEqual(catalog.search({ city: 'Уфа', query: 'Щелкунчика' }).events.map(event => event.title), ['Большой зимний концерт']);
+    assert.deepEqual(catalog.search({ city: 'Уфа', query: 'Павла Дедищева', matchWords: true }).events.map(event => event.title), ['Павел Дедищев. Стендап']);
+  } finally { catalog.close(); }
+});
+
+test('discovery shows sessions starting on the requested date before ongoing events while keeping both', () => {
+  const catalog = openCatalog(':memory:', () => now);
+  try {
+    catalog.importEvents([
+      { ...record, sourceKey: 'ongoing', title: 'Выставка проходит сейчас', startsAt: '2026-11-11T10:00:00+05:00' },
+      { ...record, sourceKey: 'family', title: 'Семейная выставка', startsAt: '2026-11-14T20:00:00+05:00' },
+      record,
+    ]);
+    const filters = parseFilters({ date: '2026-11-14' }, now);
+    assert.deepEqual(catalog.search(filters).events.map(event => event.title), ['Выставка проходит сейчас', record.title, 'Семейная выставка']);
+    assert.equal(catalog.search({ ...filters, sort: 'sessions', limit: 1 }).events[0]?.title, record.title);
+    assert.equal(catalog.search({ ...filters, sort: 'sessions', limit: 2, page: 2 }).events[0]?.title, 'Выставка проходит сейчас');
+    assert.deepEqual(catalog.search({ ...filters, sort: 'family' }).events.map(event => event.title),
+      ['Семейная выставка', record.title, 'Выставка проходит сейчас']);
+  } finally { catalog.close(); }
+});
+
 test('keeps subscriptions durable and unsubscribe idempotent', () => {
   const catalog = openCatalog(':memory:', () => now);
   try {

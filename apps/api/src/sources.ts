@@ -1,7 +1,9 @@
 import { load } from 'cheerio';
+import { normalizeText } from './catalog.ts';
 import { mapConcurrent, openCrawler, sourceReader } from './crawl.ts';
 import type { Read } from './crawl.ts';
 import type { SourceEvent } from './catalog.ts';
+import { theaterName } from './local-feeds.ts';
 
 import {
   category, clean, eventNotice, inUfa, numberBetween, plainHtml, publicPage, record, safeUrl, structuredData,
@@ -126,8 +128,11 @@ function afishaEvent(html: ReturnType<typeof load>, url: URL, now: Date): Source
   const location = record(raw.location);
   const address = record(location.address);
   const city = clean(address.addressLocality);
-  const venue = clean(location.name);
-  if (!title || !startsAt || !city || !/^Уфа$/i.test(city) || !venue) return;
+  const venueName = clean(location.name);
+  const streetAddress = clean(address.streetAddress);
+  if (!title || !startsAt || !city || !/^Уфа$/i.test(city) || !venueName) return;
+  const venue = normalizeText(venueName) === 'молодежный театр им мустая карима' &&
+    streetAddress && normalizeText(streetAddress) === 'ул ленина 62' ? theaterName : venueName;
 
   const notice = eventNotice(title, html('.uf-event-detail-title').text(),
     plainHtml(html('.uf-event-description').html()), clean(raw.description) ?? '');
@@ -145,7 +150,7 @@ function afishaEvent(html: ReturnType<typeof load>, url: URL, now: Date): Source
   return {
     title, startsAt, endsAt: endsAt && Date.parse(endsAt) >= Date.parse(startsAt) ? endsAt : undefined,
     category: category(html('.uf-event-category-badge').first().text() + ' ' + String(raw['@type'])),
-    city: 'Уфа', venue, address: clean(address.streetAddress),
+    city: 'Уфа', venue, address: streetAddress,
     ageLimit: age ? numberBetween(age[1], 0, 21) : undefined,
     priceMin: explicitlyFree ? 0 : pricesInRubles ? numberBetween(offer.lowPrice ?? offer.price, 0, Infinity) : undefined,
     priceMax: explicitlyFree ? 0 : pricesInRubles ? numberBetween(offer.highPrice ?? offer.price, 0, Infinity) : undefined,
@@ -214,7 +219,7 @@ async function scrape(read: Read, now: Date, result: SourceResult) {
 }
 
 export async function collectSources({ fetcher = fetch, now = new Date(), onSource }: {
-  fetcher?: typeof fetch; now?: Date; onSource?: (result: SourceResult, durationMs: number) => void;
+  fetcher?: typeof fetch; now?: Date; onSource?: (result: SourceResult, durationMs: number) => void | Promise<void>;
 } = {}): Promise<SourceResult[]> {
   const read = sourceReader(fetcher);
   const sources = [[cultureName, municipal], [afishaName, scrape]] as const;
@@ -222,7 +227,7 @@ export async function collectSources({ fetcher = fetch, now = new Date(), onSour
     const started = performance.now();
     const result: SourceResult = { name, events: [], rejected: 0 };
     try { await collect(read, now, result); } catch (error) { result.error = errorMessage(error); }
-    onSource?.(result, Math.round(performance.now() - started));
+    await onSource?.(result, Math.round(performance.now() - started));
     return result;
   }));
 }

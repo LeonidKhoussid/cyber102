@@ -1,4 +1,19 @@
 services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: afisha
+      POSTGRES_USER: afisha
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres:/var/lib/postgresql
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5433}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U afisha -d afisha"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
   api:
     build:
       context: .
@@ -10,25 +25,40 @@ services:
       HOST: 0.0.0.0
       REFRESH_INTERVAL_MINUTES: ${REFRESH_INTERVAL_MINUTES:-360}
       BOOTSTRAP_CATALOG: ${BOOTSTRAP_CATALOG:-1}
-      CATALOG_PATH: /app/data/catalog.sqlite
+      PGHOST: db
+      PGPORT: 5432
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      WEB_PORT: ${WEB_PORT:-3000}
+      PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
+      TELEGRAM_CLIENT_ID: ${TELEGRAM_CLIENT_ID:-}
+      TELEGRAM_CLIENT_SECRET: ${TELEGRAM_CLIENT_SECRET:-}
       ADMIN_TOKEN: ${ADMIN_TOKEN:-}
       BOT_API_TOKEN: ${BOT_API_TOKEN:-}
       TIMEPAD_TOKEN: ${TIMEPAD_TOKEN:-}
       ROUTING_ORIGIN: ${ROUTING_ORIGIN:-}
       TIMEWEB_API_KEY: ${TIMEWEB_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       BASE_URL: ${BASE_URL:-https://api.timeweb.ai/v1}
       DISCOVERY_MODEL: ${DISCOVERY_MODEL:-}
       DISCOVERY_MODEL_KEY: ${DISCOVERY_MODEL_KEY:-}
       DISCOVERY_MODEL_BASE: ${DISCOVERY_MODEL_BASE:-https://api.openai.com/v1}
-    volumes:
-      - catalog:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
   web:
     build:
       context: .
       target: web
     ports:
       - "127.0.0.1:${WEB_PORT:-3000}:80"
-    depends_on: [api]
+    depends_on:
+      api:
+        condition: service_healthy
   bot:
     profiles: [telegram]
     build:
@@ -41,4 +71,4 @@ services:
       PUBLIC_SITE_URL: ${PUBLIC_SITE_URL:-}
     depends_on: [api]
 volumes:
-  catalog:
+  postgres:

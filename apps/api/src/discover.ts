@@ -1,23 +1,35 @@
 import { categories } from '@afisha/contracts';
 import type { CatalogEvent, DiscoveryContext, DiscoveryResponse } from '@afisha/contracts';
 import { normalizeText } from './catalog.ts';
-import type { Catalog, EventFilters } from './catalog.ts';
-import { datePeriod, localDate } from './filters.ts';
-import { cleanContext, constraintIssue, readIntent } from './intent.ts';
+import type { CatalogStore, EventFilters } from './catalog.ts';
+import { datePeriod, localDate, localDay } from './filters.ts';
+import { cleanContext, constraintIssue, isSearchReset, maximumAge, mergeIntent, readAgeReply, readIntent } from './intent.ts';
 import type { Point, TravelEstimate } from './routing.ts';
 
 type Interpret = (message: string, context: DiscoveryContext, cities: string[], date: string) => Promise<DiscoveryContext>;
-type Options = { clock?: () => Date; travel?: TravelEstimate; interpret?: Interpret; onInterpretFailure?: () => void };
+type Recommend = (message: string, context: DiscoveryContext, candidates: CatalogEvent[]) =>
+  Promise<{ picks: { id: string; reason?: string }[]; question?: string }>;
+type Options = { clock?: () => Date; travel?: TravelEstimate; interpret?: Interpret; recommend?: Recommend; onInterpretFailure?: () => void };
 type Match = DiscoveryResponse['events'][number];
-type Rejection = 'age' | 'budget' | 'end' | 'start' | 'travel' | 'unknownAge' | 'unknownPrice' | 'unknownEnd' | 'unknownTravel';
+type Rejection = 'age' | 'budget' | 'end' | 'start' | 'travel' | 'language' | 'unknownAge' | 'unknownPrice' | 'unknownEnd' | 'unknownTravel';
 
 const shortDate = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Asia/Yekaterinburg', weekday: 'long', day: 'numeric', month: 'long' });
+const dayAndMonth = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Asia/Yekaterinburg', day: 'numeric', month: 'long' });
 const time = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Yekaterinburg', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
 const money = new Intl.NumberFormat('ru-RU');
 const periods = { today: 'Сегодня', tomorrow: 'Завтра', weekend: 'Ближайшие выходные', week: 'Ближайшие 7 дней' };
+const languages = { ru: 'Русский', ba: 'Башкирский' };
 
 function labelDate(date: string) {
   return shortDate.format(new Date(date + 'T12:00:00+05:00'));
+}
+
+function dateFilters(context: DiscoveryContext, now: Date): Pick<EventFilters, 'from' | 'until'> {
+  if (context.date || context.period) return datePeriod(context.date ?? context.period ?? '', now);
+  return {
+    from: context.fromDate ? datePeriod(context.fromDate, now).from : undefined,
+    until: context.untilDate ? datePeriod(localDay(context.untilDate, 1), now).from : undefined,
+  };
 }
 
 function constraints(context: DiscoveryContext) {
@@ -26,9 +38,13 @@ function constraints(context: DiscoveryContext) {
     if (value) labels.push({ label, value });
   }
   show('Город', context.city);
-  show('Когда', context.date ? labelDate(context.date) : context.period && periods[context.period]);
+  show('Площадка', context.venue);
+  show('Когда', context.date ? labelDate(context.date) : context.period ? periods[context.period] :
+    context.fromDate && context.untilDate ? `${labelDate(context.fromDate)} — ${labelDate(context.untilDate)}` :
+    context.fromDate ? `С ${labelDate(context.fromDate)}` : context.untilDate ? `По ${labelDate(context.untilDate)}` : undefined);
   show('Категория', context.category && categories[context.category]);
-  show('Ребёнок', context.childAge === undefined ? context.child ? 'Возраст уточняется' : undefined : `${context.childAge} лет`);
+  show('Язык', context.language && languages[context.language]);
+  show('Возраст', context.childAge === undefined ? context.child ? 'Уточняется' : undefined : String(context.childAge));
   show('Участники', context.partySize ? String(context.partySize) : undefined);
   show('Цена', context.cheaperThan !== undefined ? `Меньше ${money.format(context.cheaperThan)} ₽` : undefined);
   show('Бюджет', context.budget === undefined ? undefined : context.budget === 0 ? 'Бесплатно' :
@@ -36,8 +52,10 @@ function constraints(context: DiscoveryContext) {
   show('Начало', context.earliestStart && `С ${context.earliestStart}`);
   show('Окончание', context.latestEnd && `До ${context.latestEnd}`);
   show('Дорога', context.travelMinutes && `До ${context.travelMinutes} мин` || undefined);
+  show('Сортировка', context.sortByDistance ? 'Сначала ближе' : undefined);
   show('Откуда', context.origin);
   show('Интерес', context.query);
+  show('Предпочтение', context.preference);
   return labels;
 }
 
@@ -45,28 +63,40 @@ function totalCost(event: CatalogEvent, context: DiscoveryContext): number | und
   return event.priceMin === undefined ? undefined : event.priceMin * (context.partySize ?? 1);
 }
 
-function checkEvent(event: CatalogEvent, context: DiscoveryContext): Rejection | undefined {
+function checkEvent(event: CatalogEvent, context: DiscoveryContext): Rejection[] {
+  const reasons: Rejection[] = [];
+  if (context.language && !normalizeText(event.language ?? '').split(' ').some(language =>
+    context.language === 'ba' ? /^(?:ba$|bak$|башкирск|башкорт)/u.test(language) : /^(?:ru$|rus$|русск)/u.test(language))) {
+    reasons.push('language');
+  }
   if (context.childAge !== undefined) {
-    if (event.ageLimit === undefined) return 'unknownAge';
-    if (event.ageLimit > context.childAge) return 'age';
+    if (event.ageLimit === undefined) reasons.push('unknownAge');
+    else if (event.ageLimit > context.childAge) reasons.push('age');
   }
   if (context.budget !== undefined || context.cheaperThan !== undefined || context.free) {
     const cost = totalCost(event, context);
-    if (cost === undefined) return 'unknownPrice';
-    if ((context.budget !== undefined && cost > context.budget) ||
-        (context.cheaperThan !== undefined && cost >= context.cheaperThan) || (context.free && cost !== 0)) return 'budget';
+    if (cost === undefined) reasons.push('unknownPrice');
+    else if ((context.budget !== undefined && cost > context.budget) ||
+        (context.cheaperThan !== undefined && cost >= context.cheaperThan) || (context.free && cost !== 0)) reasons.push('budget');
   }
   const start = new Date(event.startsAt);
-  if (context.earliestStart && time.format(start) < context.earliestStart) return 'start';
+  if (context.earliestStart && time.format(start) < context.earliestStart) reasons.push('start');
   if (context.latestEnd) {
-    if (!event.endsAt) return 'unknownEnd';
-    const end = new Date(event.endsAt);
-    if (localDate(start) !== localDate(end) || time.format(end) > context.latestEnd) return 'end';
+    if (!event.endsAt) reasons.push('unknownEnd');
+    else {
+      const end = new Date(event.endsAt);
+      if (localDate(start) !== localDate(end) || time.format(end) > context.latestEnd) reasons.push('end');
+    }
   }
+  return reasons;
 }
 
-function explain(event: CatalogEvent, context: DiscoveryContext, travel?: number): string[] {
-  const reasons = [shortDate.format(new Date(event.startsAt)) + ', ' + time.format(new Date(event.startsAt))];
+function explain(event: CatalogEvent, context: DiscoveryContext, now: Date, travel?: number): string[] {
+  const start = new Date(event.startsAt);
+  const end = event.endsAt && new Date(event.endsAt);
+  const reasons = [end && localDate(start) !== localDate(end) && start < now
+    ? `Идёт до ${shortDate.format(end)}`
+    : shortDate.format(start) + ', ' + time.format(start)];
   if (context.childAge !== undefined && event.ageLimit !== undefined) reasons.push(`Возрастное ограничение ${event.ageLimit}+`);
   const cost = totalCost(event, context);
   if (cost !== undefined) {
@@ -80,15 +110,16 @@ function explain(event: CatalogEvent, context: DiscoveryContext, travel?: number
 }
 
 const rejectionReason: Record<Rejection, [string, string?]> = {
-  age: ['Для ребёнка нет подтверждённых вариантов с подходящим возрастным ограничением.'],
-  budget: ['Варианты с указанной ценой выходят за бюджет.', 'Любая цена'],
-  start: ['Варианты начинаются раньше указанного времени.', 'Любое время'],
-  end: ['Варианты заканчиваются позже указанного времени.', 'Любое время'],
-  travel: ['Проверенные маршруты занимают больше времени, чем указано.', 'Без учёта дороги'],
-  unknownAge: ['У части вариантов источник не указал возраст. Не могу подтвердить, что они подойдут ребёнку.'],
-  unknownPrice: ['У части вариантов источник не указал цену. Не могу подтвердить, что они уложатся в бюджет.', 'Любая цена'],
-  unknownEnd: ['У части вариантов источник не указал окончание. Не могу подтвердить, что они закончатся вовремя.', 'Любое время'],
-  unknownTravel: ['Не получилось проверить маршрут до подходящих площадок.', 'Без учёта дороги'],
+  language: ['У найденных событий нужный язык не указан или указан другой.', 'Любой язык'],
+  age: ['У некоторых событий возрастное ограничение выше указанного.', 'Без учёта возраста'],
+  budget: ['Некоторые события выходят за бюджет.', 'Любая цена'],
+  start: ['Некоторые события начинаются раньше указанного времени.', 'Любое время'],
+  end: ['Некоторые события заканчиваются позже указанного времени.', 'Любое время'],
+  travel: ['Некоторые проверенные маршруты занимают больше указанного времени.', 'Без учёта дороги'],
+  unknownAge: ['У некоторых событий не указан возраст, поэтому их доступность ребёнку не подтверждена.', 'Без учёта возраста'],
+  unknownPrice: ['Для некоторых событий не указана цена, поэтому соответствие бюджету не подтверждено.', 'Любая цена'],
+  unknownEnd: ['У некоторых событий не указано время окончания.', 'Любое время'],
+  unknownTravel: ['Не получилось проверить маршрут до некоторых площадок.', 'Без учёта дороги'],
 };
 
 function originPoint(origin: string, venues: CatalogEvent[]): Point | undefined {
@@ -107,14 +138,14 @@ function originPoint(origin: string, venues: CatalogEvent[]): Point | undefined 
   }
 }
 
-export function createDiscovery(catalog: Catalog, { clock = () => new Date(), travel, interpret, onInterpretFailure }: Options = {}) {
-  function* searchCandidates(context: DiscoveryContext, now: Date, includeDates = true) {
+export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(), travel, interpret, recommend, onInterpretFailure }: Options = {}) {
+  async function* searchCandidates(context: DiscoveryContext, now: Date, includeDates = true, sort?: EventFilters['sort']) {
     const filters: EventFilters = {
-      city: context.city, category: context.category, query: context.query, limit: 50,
-      ...(includeDates ? datePeriod(context.date ?? context.period ?? '', now) : {}),
+      city: context.city, category: context.category, venue: context.venue, query: context.query, limit: 50,
+      sort, matchWords: true, ...(includeDates ? dateFilters(context, now) : {}),
     };
     for (let page = 1; page <= 10_000; page++) {
-      const result = catalog.search({ ...filters, page });
+      const result = await catalog.search({ ...filters, page });
       yield* result.events;
       if (page * result.limit >= result.total) break;
     }
@@ -122,42 +153,53 @@ export function createDiscovery(catalog: Catalog, { clock = () => new Date(), tr
 
   return async function discover(message: string, prior?: unknown): Promise<DiscoveryResponse> {
     const now = clock();
-    const previous = cleanContext(prior);
-    const cities = catalog.directories().cities;
+    const previous = isSearchReset(message) ? {} : cleanContext(prior);
+    const { cities, venues } = await catalog.directories();
     const words = normalizeText(message);
+    const closer = /^(?:а )?(?:что )?(?:поближе|ближе)(?: к .+)?$/u.test(words);
     if (/^(?:игнорируй|забудь|покажи системн|раскрой системн)|(?:^| )системный промпт(?: |$)/u.test(words) || !words) {
       return {
         status: 'clarify', message: 'Я помогу подобрать культурные события. Что вам хотелось бы посмотреть?',
         suggestions: ['Куда сходить в эти выходные?'], events: [], context: previous, constraints: constraints(previous),
       };
     }
-    const issue = constraintIssue(message);
+    const redirect = /^(?:подпиши|отпиши|оформи подписку|отмени подписку|(?:купи|забронируй) билет)/u.test(words)
+      ? 'Могу найти события и ссылки на билеты. Подписки можно изменить в меню Telegram-бота.'
+      : /^(?:какая (?:будет )?погода|какой (?:сейчас )?курс|напиши (?:мне )?(?:стих|код)|расскажи (?:мне )?анекдот)/u.test(words)
+        ? 'Я помогаю найти культурные события в Башкортостане. Могу подобрать афишу на нужный день.' : undefined;
+    if (redirect) return { status: 'clarify', message: redirect, suggestions: [], events: [], context: previous, constraints: constraints(previous) };
+    const ageReply = previous.child && previous.childAge === undefined ? readAgeReply(message) : undefined;
+    const issue = ageReply !== undefined && (!Number.isInteger(ageReply) || ageReply < 0 || ageReply > maximumAge)
+      ? 'Укажите возраст числом от 0 до 120.'
+      : constraintIssue(message);
     if (issue) return { status: 'clarify', message: issue, suggestions: [], events: [], context: previous, constraints: constraints(previous) };
-    const local = readIntent(message, previous, cities, now);
+    const local = ageReply === undefined ? readIntent(message, previous, cities, now, venues) : { ...previous, childAge: ageReply };
+    if (ageReply !== undefined && /^\d+$/u.test(local.query ?? '')) delete local.query;
     let context = local;
     let modelUnavailable = false;
-    if (interpret && !/^(?:новый поиск|начнем заново|сначала)(?:\s|$)/u.test(words)) {
+    const relax = /^(?:в любой день(?: без учета дороги)?|любая категория|любая цена|любое время|любой язык|любая площадка|без учета дороги|без учета возраста|без темы)$/u.test(words);
+    const resetOnly = /^(?:новый поиск|начнем заново|сначала)$/u.test(words);
+    const cityOnly = local.city && (words === normalizeText(local.city) || words === 'город ' + normalizeText(local.city));
+    const preferenceReply = previous.awaitingPreference && local.preference !== previous.preference;
+    if (interpret && ageReply === undefined && !relax && !resetOnly && !cityOnly && !preferenceReply) {
       try {
         const interpreted = await interpret(message, previous, cities, localDate(now));
-        // Use the parser to fill gaps, and preserve explicit local edits and removals.
-        const explicit = new Set([...Object.keys(previous), ...Object.keys(local)].filter(key =>
-          previous[key as keyof DiscoveryContext] !== local[key as keyof DiscoveryContext]));
-        const merged = { ...local, ...interpreted } as Record<string, unknown>;
-        for (const key of explicit) merged[key] = local[key as keyof DiscoveryContext];
-        if (local.date && !explicit.has('period')) delete merged.period;
-        context = cleanContext(merged);
+        context = mergeIntent(message, previous, local, interpreted, cities, venues, now);
       } catch {
         onInterpretFailure?.();
         modelUnavailable = true;
         context = local;
       }
     }
-    if (previous.travelMinutes && !previous.origin && !context.origin && !context.query?.startsWith('новый поиск') &&
-        (/^\s*-?\d{1,2}\.\d+\s*[,;]\s*-?\d{1,3}\.\d+\s*$/.test(message) ||
-        (/^от\s+/u.test(words) && !/^(?:от)\s+\d+\s*(?:руб|р)(?:\s|$)/u.test(words)))) {
+    const coordinateReply = /^\s*-?\d{1,2}\.\d+\s*[,;]\s*-?\d{1,3}\.\d+\s*$/.test(message);
+    const venueReply = venues.some(venue => normalizeText(venue.name) === words);
+    if ((previous.travelMinutes || previous.sortByDistance) && !previous.origin && !context.origin &&
+        (coordinateReply || venueReply || /^от (?!\d+ (?:руб|р)(?:\s|$))/u.test(words))) {
       context.origin = message.trim().replace(/^от\s+/iu, '');
       context.query = previous.query;
+      context.venue = previous.venue;
     }
+    if (closer) context.sortByDistance = true;
     if (/^(?:а )?(?:подешевле|дешевле)(?:\s|$)/u.test(words) && context.budget !== 0) {
       if (previous.referencePrice !== undefined) context.cheaperThan = previous.referencePrice;
     }
@@ -178,24 +220,41 @@ export function createDiscovery(catalog: Catalog, { clock = () => new Date(), tr
     const blockers = new Map<Rejection, number>();
     const record = (reason: Rejection) => blockers.set(reason, (blockers.get(reason) ?? 0) + 1);
     const matches: Match[] = [];
+    const repeated: Match[] = [];
+    const shownTitles = new Set<string>();
+    const ranker = !modelUnavailable && !context.query && context.cheaperThan === undefined && !context.sortByDistance ? recommend : undefined;
+    const candidateLimit = ranker ? 25 : 5;
+    const diversifyFilms = !context.query && !context.category && context.cheaperThan === undefined;
     const travelCandidates: CatalogEvent[] = [];
+    const requiredDetails = [
+      context.childAge !== undefined && 'возрастное ограничение',
+      (context.budget !== undefined || context.cheaperThan !== undefined || context.free) && 'цена',
+      context.latestEnd && 'время окончания',
+    ].filter((detail): detail is string => typeof detail === 'string');
+    let checked = 0;
+    let complete = 0;
     let checkedOnlySample = false;
     let found = false;
-    for (const event of searchCandidates(context, now)) {
+    const askOrigin = 'Откуда вы поедете? Укажите название площадки или её адрес из афиши, либо координаты.';
+    const routeNeeded = context.sortByDistance || context.travelMinutes !== undefined;
+    const dated = context.date || context.period || context.fromDate || context.untilDate;
+    const sort = context.cheaperThan !== undefined ? 'price' : context.query ? 'relevance' :
+      !context.category && context.childAge !== undefined && context.childAge <= 12 ? 'family' :
+        dated && !context.category ? 'sessions' : undefined;
+    for await (const event of searchCandidates(context, now, true, sort)) {
       found = true;
       if (seen.has(event.id)) continue;
       const blocked = checkEvent(event, context);
-      if (blocked) {
-        record(blocked);
+      checked++;
+      if (!blocked.some(reason => reason === 'unknownAge' || reason === 'unknownPrice' || reason === 'unknownEnd')) complete++;
+      if (blocked.length) {
+        blocked.forEach(record);
         continue;
       }
       if (context.child && context.childAge === undefined) {
-        return respond('clarify', 'Сколько лет ребёнку? Проверю возрастные ограничения в карточках.');
+        return respond('clarify', 'Сколько лет ребёнку? Так я смогу проверить возрастные ограничения.', ['Без учёта возраста']);
       }
-      if (context.travelMinutes !== undefined) {
-        if (!context.origin) return respond('clarify',
-          'Откуда вы поедете? Напишите название площадки или её адрес из афиши, либо координаты. Рассчитаю ориентировочное время на машине, если маршрут доступен.',
-          ['Без учёта дороги']);
+      if (routeNeeded) {
         travelCandidates.push(event);
         if (travelCandidates.length > 25) {
           travelCandidates.pop();
@@ -203,48 +262,162 @@ export function createDiscovery(catalog: Catalog, { clock = () => new Date(), tr
           break;
         }
       } else {
-        matches.push({ event, reasons: explain(event, context) });
-        if (matches.length === 5) break;
+        const match = { event, reasons: explain(event, context, now) };
+        if (ranker || (diversifyFilms && event.category === 'cinema')) {
+          const title = normalizeText(event.title) + '|' + event.city;
+          if (shownTitles.has(title)) {
+            if (repeated.length < 5) repeated.push(match);
+            continue;
+          }
+          shownTitles.add(title);
+        }
+        matches.push(match);
+        if (matches.length === candidateLimit) break;
       }
     }
     if (travelCandidates.length) {
-      const origin = context.origin && originPoint(context.origin,
-        [...searchCandidates({ city: context.city }, now, false)]);
+      const routePreview = (events: CatalogEvent[], next?: string): DiscoveryResponse => {
+        const day = context.date ? labelDate(context.date) : undefined;
+        const limit = context.travelMinutes === undefined ? '' : ` Лимит в ${context.travelMinutes} мин пока не подтверждён.`;
+        const opening = day ? `${day[0].toUpperCase()}${day.slice(1)} — есть варианты по остальным условиям.` : 'Вот варианты по остальным условиям.';
+        return {
+          ...respond('clarify', `${opening} Сейчас я не могу проверить время в пути.${limit}${next ? ' ' + next : ''}`, ['Без учёта дороги']),
+          alternatives: events.slice(0, 5).map(event => ({ event, reasons: [...explain(event, context, now), 'Время в пути не проверено'] })),
+        };
+      };
+      if (!travel) return routePreview(travelCandidates);
+      if (!context.origin) return routePreview(travelCandidates, askOrigin);
+      let origin = originPoint(context.origin, []);
       if (!origin) {
-        return respond('clarify', 'Не нашёл точку отправления в каталоге. Пришлите координаты или точное название площадки.', ['Без учёта дороги']);
+        for await (const venue of searchCandidates({ city: context.city }, now, false)) {
+          origin = originPoint(context.origin, [venue]);
+          if (origin) break;
+        }
       }
-      const estimates = travel ? await travel(origin, travelCandidates).catch(() => new Map<string, number>()) : new Map<string, number>();
+      if (!origin) {
+        return routePreview(travelCandidates, 'Не нашёл точку отправления в каталоге. Пришлите координаты или точное название площадки.');
+      }
+      const estimates = await travel(origin, travelCandidates).catch(() => new Map<string, number>());
+      if (context.sortByDistance) travelCandidates.sort((first, second) =>
+        (estimates.get(first.id) ?? Infinity) - (estimates.get(second.id) ?? Infinity));
       for (const event of travelCandidates) {
         const minutes = estimates.get(event.id);
         if (minutes === undefined) record('unknownTravel');
-        else if (minutes > (context.travelMinutes ?? 0)) record('travel');
-        else matches.push({ event, reasons: explain(event, context, minutes) });
-        if (matches.length === 5) break;
+        else if (context.travelMinutes !== undefined && minutes > context.travelMinutes) record('travel');
+        else matches.push({ event, reasons: explain(event, context, now, minutes) });
+        if (matches.length === candidateLimit) break;
       }
+      const unverified = travelCandidates.filter(event => !estimates.has(event.id));
+      if (!matches.length && unverified.length) return routePreview(unverified);
     }
+    matches.push(...repeated.slice(0, candidateLimit - matches.length));
     if (matches.length) {
-      context.seenEventIds = [...seen, ...matches.map(({ event }) => event.id)].slice(-100);
-      const prices = matches.map(({ event }) => totalCost(event, context)).filter((price): price is number => price !== undefined);
+      let selected = matches.slice(0, 5);
+      let question: string | undefined;
+      let recommendationShown = false;
+      let matchingCities = [...new Set(matches.map(({ event }) => event.city))];
+      if (recommend && !context.query && !context.city && !routeNeeded && !/любой город|в любом городе|вся республика/u.test(words)) {
+        const eligible = await Promise.all(cities.map(async city => matchingCities.includes(city) ||
+          Boolean(await firstAlternative({ ...context, city }, true))));
+        matchingCities = cities.filter((_city, index) => eligible[index]);
+        if (matchingCities.length > 1) {
+          return respond('clarify', 'В каком городе ищем? От этого зависит подборка.', matchingCities.slice(0, 3).map(city => 'Город: ' + city));
+        }
+      }
+      if (ranker && matches.length > 1) {
+        try {
+          const result = await ranker(message, context, matches.map(({ event }) => event));
+          const byId = new Map(matches.map(match => [match.event.id, match]));
+          const ranked = result.picks.flatMap(({ id, reason }) => {
+            const match = byId.get(id);
+            if (!match) return [];
+            byId.delete(id);
+            return [{ ...match, reasons: reason ? [reason, ...match.reasons] : match.reasons }];
+          });
+          if (ranked.length) selected = ranked.slice(0, 5);
+          recommendationShown = ranked.length > 0;
+          if (!context.preference && !previous.awaitingPreference && !more && matchingCities.length === 1) question = result.question;
+        } catch {
+          onInterpretFailure?.();
+          modelUnavailable = true;
+        }
+      }
+      if (question) context.awaitingPreference = true;
+      context.seenEventIds = [...seen, ...selected.map(({ event }) => event.id)].slice(-100);
+      const prices = selected.map(({ event }) => totalCost(event, context)).filter((price): price is number => price !== undefined);
       context.referencePrice = prices.length ? Math.min(...prices) : undefined;
-      return respond('matches', matches.length === 1 ? 'Нашёл подходящее событие.' : 'Вот что подходит по вашим условиям.',
-        [context.referencePrice === 0 || context.referencePrice === undefined ? 'А что ещё?' : 'А подешевле?', 'А на выходных?'], matches);
+      const summary = checkedOnlySample && context.sortByDistance
+        ? 'Показал ближайшие события среди 25 вариантов, для которых проверял дорогу.'
+        : recommendationShown ? `Я бы начал с «${selected[0].event.title}».`
+          : selected.length === 1 ? 'Нашёл подходящее событие.' : 'Вот что подходит по вашим условиям.';
+      return respond('matches', question ? `${summary} ${question}` : summary,
+        ['А что ещё?', ...(context.referencePrice ? ['А подешевле?'] : []),
+          ...(!context.date && context.period !== 'weekend' ? ['А на выходных?'] : [])], selected);
     }
-    if (more && found && !blockers.size) {
+    if (more && found && !checkedOnlySample) {
       context.seenEventIds = [...seen];
-      return respond('no_results', 'По этим условиям дополнительных событий в каталоге нет.',
-        ['В любой день', 'Любая категория']);
+      return respond('no_results', 'По этим условиям больше нет подтверждённых вариантов.');
     }
     context.referencePrice = undefined;
+    async function firstAlternative(filters: DiscoveryContext, includeDates: boolean) {
+      if (filters.travelMinutes || filters.sortByDistance || (filters.child && filters.childAge === undefined)) return;
+      for await (const event of searchCandidates(filters, now, includeDates)) {
+        if (!seen.has(event.id) && checkEvent(event, filters).length === 0 &&
+            (includeDates || Date.parse(event.startsAt) >= now.getTime())) return event;
+      }
+    }
+    // Only suggest another day when every other requested condition is confirmed.
+    const alternative = dated ? await firstAlternative(context, false) : undefined;
+    const alternativeText = alternative ? ` Ближайший подходящий вариант в другой день — «${alternative.title}»: ${shortDate.format(new Date(alternative.startsAt))}, ${time.format(new Date(alternative.startsAt))}.` : '';
+    const nearbyDate = dated && routeNeeded && !travelCandidates.length ? await firstAlternative({
+      ...context, travelMinutes: undefined, origin: undefined, sortByDistance: undefined,
+    }, false) : undefined;
+    const nearbyText = nearbyDate
+      ? ` Ближайший вариант по остальным условиям — ${shortDate.format(new Date(nearbyDate.startsAt))}. Например, ${nearbyDate.title}. Время в пути не проверено.`
+      : '';
+    const nearbySuggestion = nearbyDate ? [`А ${dayAndMonth.format(new Date(nearbyDate.startsAt))}?`, 'В любой день, без учёта дороги'] : [];
     if (blockers.size) {
       const ranked = [...blockers.entries()].sort((first, second) => second[1] - first[1]);
-      const [reason, suggestion] = rejectionReason[ranked[0][0]];
-      return respond('no_results', (checkedOnlySample ? 'Среди 25 проверенных вариантов совпадений нет. ' : 'По всем условиям совпадений нет. ') + reason,
-        [suggestion, context.date || context.period ? 'В любой день' : undefined].filter((value): value is string => Boolean(value)));
+      const reasons = ranked.map(([reason]) => rejectionReason[reason][0]).join(' ');
+      const coverage = complete < checked && !checkedOnlySample
+        ? ` У ${money.format(complete)} из ${money.format(checked)} проверенных событий указаны все данные для фильтров (${requiredDetails.join(', ')}).`
+        : '';
+      const relaxations: [string, DiscoveryContext][] = [
+        ['Любая цена', { ...context, budget: undefined, free: undefined, cheaperThan: undefined }],
+        ['Любое время', { ...context, earliestStart: undefined, latestEnd: undefined }],
+        ['Без учёта возраста', { ...context, child: undefined, childAge: undefined }],
+        ['Без учёта дороги', { ...context, travelMinutes: undefined, origin: undefined, sortByDistance: undefined }],
+        ['Любой язык', { ...context, language: undefined }],
+      ];
+      const observed = new Set(ranked.map(([reason]) => rejectionReason[reason][1]));
+      const suggestions = (await Promise.all(relaxations.map(async ([label, filters]) =>
+        observed.has(label) && await firstAlternative(filters, true) ? label : undefined))).filter(Boolean) as string[];
+      const summary = checkedOnlySample ? 'Среди 25 проверенных вариантов совпадений нет.' : coverage
+        ? 'Подтверждённых совпадений пока нет.' : 'По всем условиям совпадений нет.';
+      return respond('no_results', summary + coverage + ' ' + reasons + alternativeText + nearbyText,
+        [...(alternative ? ['В любой день'] : []), ...nearbySuggestion, ...suggestions].slice(0, 3));
     }
-    if (!found && (context.date || context.period)) {
-      return respond('no_results', 'На эти даты в каталоге нет событий по вашему запросу.', ['В любой день', 'А на выходных?']);
-    }
-    return respond('no_results', 'В каталоге пока нет подходящих событий по этому запросу.',
-      context.category ? ['Любая категория'] : ['А на выходных?']);
+    const missingCategory = context.category && !(await catalog.search({ city: context.city, category: context.category, limit: 1 })).total
+      ? context.category : undefined;
+    const [widerTopic, widerCategory, widerVenue] = await Promise.all([
+      context.query && firstAlternative({ ...context, query: undefined }, true),
+      context.category && firstAlternative({ ...context, category: undefined }, true),
+      context.venue && firstAlternative({ ...context, venue: undefined }, true),
+    ]);
+    const suggestions = [
+      ...(alternative ? ['В любой день'] : []),
+      ...nearbySuggestion,
+      ...(widerTopic ? ['Без темы'] : []),
+      ...(widerCategory ? ['Любая категория'] : []),
+      ...(widerVenue ? ['Любая площадка'] : []),
+    ];
+    const reason = missingCategory
+      ? `В каталоге нет предстоящих событий по категории «${categories[missingCategory]}»${context.city ? ` в городе «${context.city}»` : ''}.`
+      : dated ? 'Нет событий по вашему запросу на эти даты в каталоге.'
+        : 'В каталоге пока нет подходящих событий по этому запросу.';
+    const widerText = widerTopic ? ' Если убрать тему, есть события по остальным условиям.'
+      : widerCategory ? ' Есть события других категорий по остальным условиям.' :
+        widerVenue ? ' Есть события на других площадках по остальным условиям.' : '';
+    return respond('no_results', reason + alternativeText + nearbyText + widerText, suggestions);
   };
 }

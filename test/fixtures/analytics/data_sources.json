@@ -1,0 +1,53 @@
+{
+  "as_of": "2026-11-13",
+  "events_are_synthetic": true,
+  "venues_verified": [
+    {
+      "id": "V01",
+      "official_site": "https://bashopera.ru/",
+      "address": "ул. Ленина, 5/1",
+      "checked_at": [
+        "https://afisha.yandex.ru/ufa/opera/faust-bashkirskiy-gosudarstvennyy-teatr-opery-i-baleta"
+      ]
+    },
+    {
+      "id": "V03",
+      "official_site": "https://bashgf.ru/",
+      "address": "ул. Гоголя, 58",
+      "checked_at": [
+        "https://www.afisha.ru/ufa/places/concerthall/hotel/other/s-seansami/",
+        "https://allfest.ru/festival-2021/klassika-nad-beloy-rekoy"
+      ]
+    },
+    {
+      "id": "V13",
+      "official_site": "https://bashnl.ru/",
+      "address": null,
+      "checked_at": [
+        "https://tapki.com/domain/4090387"
+      ]
+    }
+  ],
+  "collector_candidates": [
+    {
+      "id": "culture_ru_ufa",
+      "url": "https://www.culture.ru/afisha/respublika-bashkortostan-ufa",
+      "terms_checked": false
+    },
+    {
+      "id": "pro_culture_api",
+      "url": "https://pro.culture.ru/",
+      "terms_checked": false
+    },
+    {
+      "id": "bashopera_affiche",
+      "url": "https://bashopera.ru/affiche/",
+      "url_verified": false
+    },
+    {
+      "id": "bashgf_affiche",
+      "url": "https://bashgf.ru/afisha/",
+      "url_verified": false
+    }
+  ]
+}

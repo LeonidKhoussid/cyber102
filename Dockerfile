@@ -10,7 +10,6 @@ RUN npm ci
 FROM dependencies AS api
 COPY packages/contracts ./packages/contracts
 COPY apps/api/src ./apps/api/src
-RUN mkdir data && chown node:node data
 USER node
 CMD ["node", "apps/api/src/main.ts"]
 

@@ -28,7 +28,8 @@ export type EventFilters = {
   until?: string;
   maxPrice?: number;
   age?: number;
-  sort?: 'date' | 'price';
+  sort?: 'date' | 'price' | 'relevance' | 'sessions' | 'family';
+  matchWords?: boolean;
   page?: number;
   limit?: number;
 };
@@ -40,7 +41,7 @@ export type ImportReport = {
   rejected: { row: number; reason: string }[];
 };
 
-const categoriesSql = "('concert','theatre','exhibition','festival','cinema','tour','other')";
+export const categoriesSql = "('concert','theatre','exhibition','festival','cinema','tour','other')";
 const schema = `
 CREATE TABLE events (
   id TEXT PRIMARY KEY,
@@ -95,6 +96,41 @@ export function normalizeText(value: string): string {
     .replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
 }
 
+function swappedNeighbor(word: string, term: string): boolean {
+  if (term.length < 6 || word.length !== term.length || !/^[а-я]+$/u.test(term)) return false;
+  let index = 0;
+  while (index < term.length && word[index] === term[index]) index++;
+  return index < term.length - 1 && word[index] === term[index + 1] && word[index + 1] === term[index] &&
+    word.slice(index + 2) === term.slice(index + 2);
+}
+
+export function relevance(query: string, title: string, searchable: string): number {
+  const normalizedTitle = normalizeText(title);
+  const titleWords = normalizedTitle.split(' ');
+  const searchableWords = searchable.split(' ');
+  const terms = query.split(' ').slice(0, 12);
+  // Preserve short words and match common Russian case endings on longer ones.
+  const stem = (word: string) => word.replace(/^павл(?:а|у|ом|е)$/u, 'павел').replace(
+    /^([а-я]{5,}?)(?:ыми|ими|ого|его|ому|ему|ую|юю|ая|яя|ый|ий|ой|ей|ое|ее|ых|их|ом|ем|ам|ям|ах|ях|ова|ева|ову|еву|ов|ев|[аяуюеиыо])$/u, '$1');
+  function matches(word: string, term: string, root: string) {
+    return word === term || (term.length >= 4 && word.startsWith(term)) || stem(word) === root;
+  }
+  let score = 0;
+  for (const term of terms) {
+    if (titleWords.includes(term)) {
+      score += 4;
+      continue;
+    }
+    const root = stem(term);
+    if (titleWords.some(word => matches(word, term, root))) score += 3;
+    else if (searchableWords.some(word => matches(word, term, root))) score += 2;
+    else if (titleWords.some(word => swappedNeighbor(word, term))) score++;
+    else return 0;
+  }
+  if (normalizedTitle === query) return score + 12;
+  return (' ' + normalizedTitle + ' ').includes(' ' + query + ' ') ? score + 6 : score;
+}
+
 export function publicUrl(value: unknown): string | undefined {
   if (typeof value !== 'string' || value.length > 2000) return;
   try {
@@ -119,12 +155,12 @@ export function isLocalDate(value: string): boolean {
   return Number.isFinite(date.valueOf()) && date.toISOString().slice(0, 10) === value;
 }
 
-function eventIdentity(event: SourceEvent): string {
+export function eventIdentity(event: SourceEvent): string {
   return JSON.stringify([normalizeText(event.city), normalizeText(event.venue),
     normalizeText(event.title), event.startsAt]);
 }
 
-function validateEvent(event: SourceEvent): SourceEvent {
+export function validateEvent(event: SourceEvent): SourceEvent {
   const required = [event.title, event.city, event.venue, event.sourceName, event.sourceKey];
   if (required.some(value => typeof value !== 'string' || !value.trim() || value.length > 500)) {
     throw new Error('Заполните название, город, площадку и источник.');
@@ -165,7 +201,7 @@ function validateEvent(event: SourceEvent): SourceEvent {
   };
 }
 
-function detailsOf(event: SourceEvent): EventDetails {
+export function detailsOf(event: SourceEvent): EventDetails {
   return {
     title: event.title, city: event.city, venue: event.venue, category: event.category,
     startsAt: event.startsAt, endsAt: event.endsAt, address: event.address,
@@ -178,6 +214,23 @@ function detailsOf(event: SourceEvent): EventDetails {
 type EventRow = { id: string; details: string; status: EventStatus; sources: string };
 type SourceRow = { event_id: string; hash: string };
 type CanonicalRow = { id: string; identity: string; status_override: EventStatus | null };
+
+export function mergeEventDetails(sourceDetails: EventDetails[], override: EventStatus | null): EventDetails {
+  const visible = sourceDetails.filter(event => event.status !== 'draft');
+  const candidates = visible.length ? visible : sourceDetails;
+  const primary = candidates.find(event => event.status === 'published') ?? candidates[0];
+  if (!primary) throw new Error('Cannot rebuild an event without a source.');
+  const status = override ?? (visible.some(event => event.status === 'cancelled') ? 'cancelled' : primary.status);
+  const price = candidates.find(event => event.priceMin !== undefined || event.priceMax !== undefined);
+  const coordinates = candidates.find(event => event.latitude !== undefined && event.longitude !== undefined);
+  const merged = { ...primary, status, priceMin: price?.priceMin, priceMax: price?.priceMax,
+    latitude: coordinates?.latitude, longitude: coordinates?.longitude };
+  for (const field of ['endsAt', 'address', 'description', 'ageLimit', 'language', 'imageUrl', 'ticketUrl'] as const) {
+    const source = candidates.find(event => event[field] !== undefined);
+    if (source) Object.assign(merged, { [field]: source[field] });
+  }
+  return merged;
+}
 
 const selectEvents = `SELECT events.id, events.details, events.status,
   COALESCE((SELECT json_group_array(json(source_item)) FROM
@@ -198,6 +251,10 @@ function readEvent(row: EventRow): CatalogEvent {
 export function openCatalog(filename = 'data/catalog.sqlite', clock = () => new Date()) {
   if (filename !== ':memory:') mkdirSync(dirname(filename), { recursive: true });
   const database = new DatabaseSync(filename);
+  database.function('event_relevance', { deterministic: true, directOnly: true }, (query, title, searchable) =>
+    relevance(String(query), String(title), String(searchable)));
+  database.function('family_title', { deterministic: true, directOnly: true }, title =>
+    Number(/(?:^| )(?:детск|семейн)|(?:^| )для (?:детей|малышей)(?: |$)/u.test(normalizeText(String(title)))));
   database.exec('PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
   database.exec('BEGIN IMMEDIATE');
   try {
@@ -229,23 +286,8 @@ export function openCatalog(filename = 'data/catalog.sqlite', clock = () => new 
       ORDER BY CASE type WHEN 'manual' THEN 0 WHEN 'api' THEN 1 WHEN 'import' THEN 2 ELSE 3 END,
         verified_at DESC, source_key`).all(id);
     const sourceDetails = records.map(record => JSON.parse(String(record.normalized)) as EventDetails);
-    const visibleDetails = sourceDetails.filter(event => event.status !== 'draft');
-    const candidates = visibleDetails.length ? visibleDetails : sourceDetails;
-    const primary = candidates.find(event => event.status === 'published') ?? candidates[0];
-    if (!primary) throw new Error('Cannot rebuild an event without a source.');
-    const status = override ?? (visibleDetails.some(event => event.status === 'cancelled') ? 'cancelled' : primary.status);
-    // Keep related fields together so that ranges and coordinate pairs always agree with a source.
-    const price = candidates.find(event => event.priceMin !== undefined || event.priceMax !== undefined);
-    const coordinates = candidates.find(event => event.latitude !== undefined && event.longitude !== undefined);
-    const merged = {
-      ...primary, priceMin: price?.priceMin, priceMax: price?.priceMax,
-      latitude: coordinates?.latitude, longitude: coordinates?.longitude,
-    };
-    for (const field of ['endsAt', 'address', 'description', 'ageLimit', 'language', 'imageUrl', 'ticketUrl'] as const) {
-      const source = candidates.find(event => event[field] !== undefined);
-      if (source) Object.assign(merged, { [field]: source[field] });
-    }
-    writeCanonical(id, identity, merged, status);
+    const merged = mergeEventDetails(sourceDetails, override);
+    writeCanonical(id, identity, merged, merged.status);
   }
 
   function recordChange(id: string, actor: string, action: string, details: unknown) {
@@ -322,7 +364,8 @@ export function openCatalog(filename = 'data/catalog.sqlite', clock = () => new 
     const page = Math.min(10_000, Math.max(1, Math.trunc(filters.page ?? 1)));
     const limit = Math.min(50, Math.max(1, Math.trunc(filters.limit ?? 12)));
     const conditions = ["status = 'published'", 'COALESCE(ends_at, starts_at) >= ?'];
-    const parameters: (number | string)[] = [clock().toISOString()];
+    const now = clock().toISOString();
+    const parameters: (number | string)[] = [now];
     function add(condition: string, value: number | string | undefined) {
       if (value === undefined || value === '') return;
       conditions.push(condition);
@@ -335,14 +378,26 @@ export function openCatalog(filename = 'data/catalog.sqlite', clock = () => new 
     add('starts_at < ?', filters.until);
     add('price_min <= ?', filters.maxPrice);
     add('age_limit <= ?', filters.age);
-    for (const term of normalizeText(filters.query ?? '').split(' ').filter(Boolean).slice(0, 12)) {
-      add('instr(search_text, ?) > 0', term);
-    }
+    const query = normalizeText(filters.query ?? '');
+    const byRelevance = filters.sort === 'relevance' && Boolean(query);
+    if (filters.matchWords || byRelevance) add('event_relevance(?, title, search_text) > 0', query);
+    else for (const term of query.split(' ').filter(Boolean).slice(0, 12)) add('instr(search_text, ?) > 0', term);
     const where = conditions.join(' AND ');
-    const order = filters.sort === 'price' ? 'price_min IS NULL, price_min, starts_at, id' : 'starts_at, id';
+    let order = 'starts_at, id';
+    const sortParameters: string[] = [];
+    if (byRelevance) {
+      order = 'event_relevance(?, title, search_text) DESC, ' + order;
+      sortParameters.push(query);
+    } else if (filters.sort === 'price') {
+      order = 'price_min IS NULL, price_min, ' + order;
+    } else if (filters.sort === 'sessions' || filters.sort === 'family') {
+      if (filters.sort === 'family') order = 'family_title(title) DESC, ' + order;
+      order = 'starts_at < ?, ' + order;
+      sortParameters.push(filters.from ?? now);
+    }
     const total = Number(database.prepare(`SELECT count(*) AS total FROM events WHERE ${where}`).get(...parameters)?.total);
     const rows = database.prepare(`${selectEvents} WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`)
-      .all(...parameters, limit, (page - 1) * limit) as EventRow[];
+      .all(...parameters, ...sortParameters, limit, (page - 1) * limit) as EventRow[];
     return { events: rows.map(readEvent), page, limit, total };
   }
 
@@ -379,6 +434,10 @@ export function openCatalog(filename = 'data/catalog.sqlite', clock = () => new 
 
   return {
     search, getEvent, directories, importEvents, setStatus,
+    eventIdForSource: (sourceType: SourceEvent['sourceType'], sourceKey: string): string | undefined => {
+      const row = database.prepare('SELECT event_id FROM sources WHERE source_key = ?').get(`${sourceType}:${sourceKey}`);
+      return row ? String(row.event_id) : undefined;
+    },
     hasSources: () => Boolean(database.prepare('SELECT 1 FROM sources LIMIT 1').get()),
     close: () => database.close(),
     subscribe(subscriber: string, subscription: Subscription) {
@@ -396,3 +455,5 @@ export function openCatalog(filename = 'data/catalog.sqlite', clock = () => new 
 }
 
 export type Catalog = ReturnType<typeof openCatalog>;
+export type CatalogStore = { [Method in keyof Catalog]: (...args: Parameters<Catalog[Method]>) =>
+  ReturnType<Catalog[Method]> | Promise<ReturnType<Catalog[Method]>> };

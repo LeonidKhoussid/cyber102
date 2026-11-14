@@ -28,7 +28,9 @@ export type QueryValues = Record<string, string | undefined>;
 
 export type DiscoveryContext = {
   city?: string; category?: Category; date?: string; period?: 'today' | 'tomorrow' | 'weekend' | 'week';
+  fromDate?: string; untilDate?: string; venue?: string; language?: 'ba' | 'ru'; sortByDistance?: boolean;
   latestEnd?: string; earliestStart?: string; childAge?: number; child?: boolean; partySize?: number;
+  preference?: string; awaitingPreference?: boolean;
   budget?: number; travelMinutes?: number; origin?: string; free?: boolean; cheaperThan?: number; referencePrice?: number; seenEventIds?: string[]; query?: string;
 };
 
@@ -37,6 +39,7 @@ export type DiscoveryResponse = {
   message: string;
   constraints: { label: string; value: string }[];
   events: { event: CatalogEvent; reasons: string[] }[];
+  alternatives?: DiscoveryResponse['events'];
   suggestions: string[];
   context: DiscoveryContext;
 };

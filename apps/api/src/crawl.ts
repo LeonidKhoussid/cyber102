@@ -12,22 +12,33 @@ export class SourceHttpError extends Error {
   }
 }
 
-export function sourceReader(fetcher: typeof fetch): Read {
+export function sourceReader(fetcher: typeof fetch, timeout = 6000): Read {
   return async (address, headers, retry = true) => {
-    const url = new URL(address);
+    let url = new URL(address);
+    const origin = url.origin;
+    const followRobotsRedirects = url.pathname === '/robots.txt' && !url.search && !headers;
     const requestHeaders = new Headers(headers);
     requestHeaders.set('User-Agent', agent);
     const request = (timeout: number) => fetcher(url.href, {
-      headers: requestHeaders, redirect: 'error', signal: AbortSignal.timeout(timeout),
+      headers: requestHeaders, redirect: followRobotsRedirects ? 'manual' : 'error', signal: AbortSignal.timeout(timeout),
     });
     // Retry a transient connection failure once without retrying HTTP rate limits or access errors.
-    const response = await request(6000).catch((error: unknown) => {
+    let response = await request(timeout).catch((error: unknown) => {
       const code = error instanceof Error && error.cause && typeof error.cause === 'object'
         ? (error.cause as { code?: string }).code : undefined;
       if (retry && error instanceof Error && (error.name === 'TimeoutError' ||
-        code === 'ECONNRESET' || code === 'UND_ERR_SOCKET' || code === 'UND_ERR_CONNECT_TIMEOUT')) return request(6000);
+        code === 'ECONNRESET' || code === 'UND_ERR_SOCKET' || code === 'UND_ERR_CONNECT_TIMEOUT')) return request(timeout);
       throw error;
     });
+    for (let redirects = 0; followRobotsRedirects && [301, 302, 303, 307, 308].includes(response.status); redirects++) {
+      const location = response.headers.get('location');
+      await response.body?.cancel();
+      if (!location || redirects >= 5) throw new Error('Invalid robots.txt redirect');
+      const target = new URL(location, url);
+      if (target.origin !== origin || target.username || target.password) throw new Error('robots.txt redirect leaves source origin');
+      url = target;
+      response = await request(timeout);
+    }
     if (!response.ok) {
       await response.body?.cancel();
       throw new SourceHttpError(response.status, url);

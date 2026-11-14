@@ -1,4 +1,8 @@
-import { openCatalog } from './catalog.ts';
+import { existsSync } from 'node:fs';
+import { initializeAccounts } from './accounts.ts';
+import { initializeChats } from './chats.ts';
+import { openDatabase, siteOrigin } from './database.ts';
+import { initializeCatalog, migrateSqliteCatalog, openPostgresCatalog } from './postgres-catalog.ts';
 import { buildServer } from './server.ts';
 import { refreshCatalog } from './sync.ts';
 
@@ -10,13 +14,29 @@ if (!Number.isInteger(refreshInterval) || refreshInterval < 0 || refreshInterval
   throw new Error('REFRESH_INTERVAL_MINUTES must be between 0 and 1440.');
 }
 
-const catalog = openCatalog(process.env.CATALOG_PATH);
-const server = await buildServer(catalog, {
-  adminToken: process.env.ADMIN_TOKEN || undefined,
-  botToken: process.env.BOT_API_TOKEN || undefined,
-  routingOrigin: process.env.ROUTING_ORIGIN || undefined,
-  logger: true,
-});
+const pool = openDatabase();
+// A saved turn holds a chat transaction while discovery reads the catalog.
+const accountPool = openDatabase(process.env, 5);
+const catalog = openPostgresCatalog(pool);
+const server = await (async () => {
+  try {
+    await initializeCatalog(pool);
+    const legacyFile = process.env.CATALOG_PATH || 'data/catalog.sqlite';
+    if (!await catalog.hasSources() && existsSync(legacyFile)) await migrateSqliteCatalog(pool, legacyFile);
+    await initializeAccounts(accountPool);
+    await initializeChats(accountPool);
+    return await buildServer(catalog, {
+      adminToken: process.env.ADMIN_TOKEN || undefined,
+      botToken: process.env.BOT_API_TOKEN || undefined,
+      routingOrigin: process.env.ROUTING_ORIGIN || undefined,
+      logger: true,
+      accounts: { pool: accountPool, origin: siteOrigin() },
+    });
+  } catch (error) {
+    await Promise.all([catalog.close(), accountPool.end()]);
+    throw error;
+  }
+})();
 
 let refresh: Promise<void> | undefined;
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -34,7 +54,7 @@ const stop = async () => {
   clearInterval(timer);
   await refresh;
   await server.close();
-  catalog.close();
+  await Promise.all([catalog.close(), accountPool.end()]);
 };
 process.once('SIGINT', stop);
 process.once('SIGTERM', stop);
@@ -46,5 +66,5 @@ try {
   throw error;
 }
 
-if (process.env.BOOTSTRAP_CATALOG === '1' && !catalog.hasSources()) refreshSources();
+if (process.env.BOOTSTRAP_CATALOG === '1' && !await catalog.hasSources()) refreshSources();
 if (refreshInterval) timer = setInterval(refreshSources, refreshInterval * 60_000);

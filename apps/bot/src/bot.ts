@@ -263,7 +263,8 @@ export function createTelegramBot({ token, service, siteUrl, onError, clock = ()
     const lines = [shorten(result.message, 800)];
     const constraints = result.constraints.map(({ label, value }) => `${label}: ${value}`).join(' · ');
     if (constraints) lines.push(shorten(constraints, 400));
-    for (const { event, reasons } of result.events.slice(0, pageSize)) {
+    const cards = result.events.length ? result.events : result.alternatives ?? [];
+    for (const { event, reasons } of cards.slice(0, pageSize)) {
       screen.button(event.title, next => showDetails(next, session, event.id, back => showDiscovery(back, session, result)));
       screen.keyboard.row();
       const summary = `${shorten(event.title, 120)} — ${dateFormatter.format(new Date(event.startsAt))}, ${shorten(event.city, 80)}`;

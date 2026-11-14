@@ -29,7 +29,7 @@ function App() {
   if (path === '/widget') return <Listing embedded />;
   const params = new URLSearchParams(window.location.search);
   if (path === '/catalog' || (path === '/' && filterKeys.some(key => params.has(key)))) return <Listing />;
-  if (path === '/') return <Discovery />;
+  if (path === '/' || path === '/login' || path === '/register') return <Discovery />;
   return <Shell><main id="main" className="inner"><h1>Страница не найдена</h1><a className="back-link" href="/"><Icon name="left" /> К поиску</a></main></Shell>;
 }
 

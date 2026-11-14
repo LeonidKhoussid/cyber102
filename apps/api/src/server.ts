@@ -1,12 +1,20 @@
 import Fastify, { LogController } from 'fastify';
 import rateLimit from '@fastify/rate-limit';
-import type { Catalog } from './catalog.ts';
+import type { CatalogStore } from './catalog.ts';
+import type { Pool } from 'pg';
+import { createSession, registerAccounts, upsertTelegramUser } from './accounts.ts';
+import { registerChats } from './chats.ts';
+import { registerTelegramLogin, telegramLoginConfigured } from './telegram-login.ts';
 import { registerApi } from './api.ts';
 import { createDiscovery } from './discover.ts';
 import { osrmEstimator } from './routing.ts';
-import { modelInterpreter } from './model.ts';
+import { modelInterpreter, modelRecommender } from './model.ts';
+import { transcriber } from './transcription.ts';
 
-export async function buildServer(catalog: Catalog, options: { adminToken?: string; botToken?: string; logger?: boolean; routingOrigin?: string; clock?: () => Date } = {}) {
+export async function buildServer(catalog: CatalogStore, options: {
+  adminToken?: string; botToken?: string; logger?: boolean; routingOrigin?: string; clock?: () => Date; disableModel?: boolean;
+  accounts?: { pool: Pool; origin: string };
+} = {}) {
   const server = Fastify({
     logger: options.logger ?? false,
     logController: new LogController({ disableRequestLogging: true }),
@@ -62,14 +70,24 @@ export async function buildServer(catalog: Catalog, options: { adminToken?: stri
     averageResponseMs: requestCount ? Number((elapsedMilliseconds / requestCount).toFixed(2)) : 0,
   }));
 
-  registerApi(server, catalog, {
-    adminToken: options.adminToken, botToken: options.botToken,
-    discover: createDiscovery(catalog, {
-      clock: options.clock,
-      travel: options.routingOrigin ? osrmEstimator(options.routingOrigin) : undefined,
-      interpret: modelInterpreter(process.env),
-      onInterpretFailure: () => server.log.warn("Model unavailable, using local search"),
-    }),
+  const discover = createDiscovery(catalog, {
+    clock: options.clock,
+    travel: options.routingOrigin ? osrmEstimator(options.routingOrigin) : undefined,
+    interpret: options.disableModel ? undefined : modelInterpreter(process.env),
+    recommend: options.disableModel ? undefined : modelRecommender(process.env),
+    onInterpretFailure: () => server.log.warn('Model unavailable, using local search'),
   });
+  registerApi(server, catalog, { adminToken: options.adminToken, botToken: options.botToken, clock: options.clock,
+    transcribe: options.disableModel ? undefined : transcriber(process.env), discover });
+  if (options.accounts) {
+    const { pool, origin } = options.accounts;
+    const env = { ...process.env, PUBLIC_SITE_URL: origin };
+    registerAccounts(server, pool, { origin, telegramEnabled: telegramLoginConfigured(env) });
+    registerChats(server, pool, { origin, discover });
+    registerTelegramLogin(server, { env, onIdentity: async (request, reply, identity, secure) => {
+      const user = await upsertTelegramUser(pool, identity.subject, identity.name);
+      await createSession(pool, reply, user.id, secure, request);
+    } });
+  }
   return server;
 }

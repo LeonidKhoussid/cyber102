@@ -7,6 +7,7 @@ export async function request<T>(url: string, options?: RequestInit): Promise<T>
     const body = await response.json().catch(() => undefined) as { message?: string } | undefined;
     throw new Error(body?.message ?? unavailable);
   }
+  if (response.status === 204) return undefined as T;
   return response.json().catch(() => { throw new Error(unavailable); });
 }
 

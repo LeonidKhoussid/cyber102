@@ -53,7 +53,7 @@ test('collects only verified events, preserves cancellations and missing values,
   const fetcher: typeof fetch = async (input, options) => {
     const url = String(input);
     requested.push(url);
-    assert.equal(options?.redirect, 'error');
+    assert.equal(options?.redirect, url.endsWith('/robots.txt') ? 'manual' : 'error');
     assert.ok(options?.signal);
     if (url.startsWith(culture + '/wp-json/')) {
       return Response.json([
@@ -186,5 +186,26 @@ test('resolves Afisha statuses independently of JSON-LD node order', async () =>
     assert.equal(result.events[0]?.status, scenario.status);
     assert.equal(result.events[0]?.ageLimit, 21);
     if (scenario.start) assert.equal(result.events[0]?.startsAt, scenario.start);
+  }
+});
+
+test('links an alternate youth theater name to the official venue only at its verified address', async () => {
+  for (const [streetAddress, expected] of [
+    ['ул. Ленина, 62', 'Национальный молодёжный театр имени Мустая Карима'],
+    ['ул. Ленина, 54', 'Молодежный театр им. Мустая Карима'],
+  ]) {
+    const listing = { ...event, location: {
+      name: 'Молодежный театр им. Мустая Карима', address: { addressLocality: 'Уфа', streetAddress },
+    } };
+    const fetcher: typeof fetch = async input => {
+      const url = String(input);
+      if (url.startsWith(culture + '/wp-json/')) return Response.json([]);
+      if (url === afisha + '/robots.txt') return new Response('User-agent: *');
+      if (url === afisha + '/list/all/') return new Response('');
+      if (url === afisha + '/' || url === listing.url) return new Response(structured(listing));
+      assert.fail('Unexpected URL ' + url);
+    };
+    const [, result] = await collectSources({ fetcher, now });
+    assert.equal(result.events[0]?.venue, expected);
   }
 });
