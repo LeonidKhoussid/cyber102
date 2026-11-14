@@ -68,6 +68,7 @@ export async function buildServer(catalog: Catalog, options: { adminToken?: stri
       clock: options.clock,
       travel: options.routingOrigin ? osrmEstimator(options.routingOrigin) : undefined,
       interpret: modelInterpreter(process.env),
+      onInterpretFailure: () => server.log.warn("Model unavailable, using local search"),
     }),
   });
   return server;

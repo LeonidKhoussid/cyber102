@@ -2,16 +2,16 @@ import type { DiscoveryContext } from '@afisha/contracts';
 import { cleanContext } from './intent.ts';
 
 export function modelInterpreter(environment: NodeJS.ProcessEnv) {
-  const key = environment.DISCOVERY_MODEL_KEY;
-  const model = environment.DISCOVERY_MODEL;
+  const key = environment.DISCOVERY_MODEL_KEY || environment.TIMEWEB_API_KEY;
+  const model = environment.DISCOVERY_MODEL || (environment.TIMEWEB_API_KEY ? 'openai/gpt-6-luna' : undefined);
   if (!key || !model) return;
-  const endpoint = new URL('chat/completions', (environment.DISCOVERY_MODEL_BASE ?? 'https://api.openai.com/v1').replace(/\/?$/, '/'));
+  const endpoint = new URL('chat/completions', ((environment.DISCOVERY_MODEL_KEY ? environment.DISCOVERY_MODEL_BASE : environment.BASE_URL) || (environment.TIMEWEB_API_KEY && !environment.DISCOVERY_MODEL_KEY ? 'https://api.timeweb.ai/v1' : 'https://api.openai.com/v1')).replace(/\/?$/, '/'));
   if (endpoint.protocol !== 'https:' && endpoint.hostname !== 'localhost' && endpoint.hostname !== '127.0.0.1') {
     throw new Error('DISCOVERY_MODEL_BASE must use HTTPS or localhost.');
   }
   return async (message: string, context: DiscoveryContext, cities: string[], date: string) => {
     const response = await fetch(endpoint, {
-      method: 'POST', signal: AbortSignal.timeout(3000), redirect: 'error',
+      method: 'POST', signal: AbortSignal.timeout(18000), redirect: 'error',
       headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
       body: JSON.stringify({
         model, response_format: { type: 'json_object' },

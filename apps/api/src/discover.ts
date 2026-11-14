@@ -7,7 +7,7 @@ import { cleanContext, constraintIssue, readIntent } from './intent.ts';
 import type { Point, TravelEstimate } from './routing.ts';
 
 type Interpret = (message: string, context: DiscoveryContext, cities: string[], date: string) => Promise<DiscoveryContext>;
-type Options = { clock?: () => Date; travel?: TravelEstimate; interpret?: Interpret };
+type Options = { clock?: () => Date; travel?: TravelEstimate; interpret?: Interpret; onInterpretFailure?: () => void };
 type Match = DiscoveryResponse['events'][number];
 type Rejection = 'age' | 'budget' | 'end' | 'start' | 'travel' | 'unknownAge' | 'unknownPrice' | 'unknownEnd' | 'unknownTravel';
 
@@ -107,7 +107,7 @@ function originPoint(origin: string, venues: CatalogEvent[]): Point | undefined 
   }
 }
 
-export function createDiscovery(catalog: Catalog, { clock = () => new Date(), travel, interpret }: Options = {}) {
+export function createDiscovery(catalog: Catalog, { clock = () => new Date(), travel, interpret, onInterpretFailure }: Options = {}) {
   function* searchCandidates(context: DiscoveryContext, now: Date, includeDates = true) {
     const filters: EventFilters = {
       city: context.city, category: context.category, query: context.query, limit: 50,
@@ -135,6 +135,7 @@ export function createDiscovery(catalog: Catalog, { clock = () => new Date(), tr
     if (issue) return { status: 'clarify', message: issue, suggestions: [], events: [], context: previous, constraints: constraints(previous) };
     const local = readIntent(message, previous, cities, now);
     let context = local;
+    let modelUnavailable = false;
     if (interpret && !/^(?:новый поиск|начнем заново|сначала)(?:\s|$)/u.test(words)) {
       try {
         const interpreted = await interpret(message, previous, cities, localDate(now));
@@ -146,6 +147,8 @@ export function createDiscovery(catalog: Catalog, { clock = () => new Date(), tr
         if (local.date && !explicit.has('period')) delete merged.period;
         context = cleanContext(merged);
       } catch {
+        onInterpretFailure?.();
+        modelUnavailable = true;
         context = local;
       }
     }
@@ -163,7 +166,7 @@ export function createDiscovery(catalog: Catalog, { clock = () => new Date(), tr
     const seen = new Set(more ? previous.seenEventIds : []);
     delete context.seenEventIds;
     const respond = (status: DiscoveryResponse['status'], message: string, suggestions: string[] = [], events: Match[] = []): DiscoveryResponse =>
-      ({ status, message, suggestions, events, context, constraints: constraints(context) });
+      ({ status, message: modelUnavailable ? `ИИ временно недоступен. Использую обычный поиск. ${message}` : message, suggestions, events, context, constraints: constraints(context) });
     if (/^(?:а )?(?:подешевле|дешевле)(?:\s|$)/u.test(words) && context.cheaperThan === undefined) {
       return respond('clarify', context.budget === 0 ? 'Уже ищу только бесплатные события. Можно изменить другие условия.'
         : 'В предыдущей подборке нет подтверждённой цены для сравнения. Какой максимальный бюджет указать?', ['Только бесплатные']);

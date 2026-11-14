@@ -26,7 +26,7 @@ export function createBotService(origin: string, token: string, fetcher: typeof 
   async function request(path: string, init?: RequestInit, allowMissing = false): Promise<Response> {
     try {
       const response = await fetcher(new URL(path, base), {
-        ...init, redirect: 'error', signal: AbortSignal.timeout(path === '/api/v1/discover' ? 10_000 : 8_000),
+        ...init, redirect: 'error', signal: AbortSignal.timeout(path === '/api/v1/discover' ? 25_000 : 8_000),
       });
       if (response.ok || (allowMissing && response.status === 404)) return response;
       await response.body?.cancel();
