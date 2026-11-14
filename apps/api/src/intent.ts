@@ -101,6 +101,7 @@ export function cleanContext(input: unknown): DiscoveryContext {
   if (result.planMode === 'day' && (step?.phase === 'question' || step?.phase === 'offer')) {
     const optionalId = (value: unknown) => typeof value === 'string' && /^[0-9a-f-]{36}$/iu.test(value) ? value : undefined;
     result.planStep = { phase: step.phase, anchor: optionalId(step.anchor), eventId: optionalId(step.eventId),
+      position: step.position === 'before' || step.position === 'after' ? step.position : undefined,
       resumeAfter: typeof step.resumeAfter === 'string' && validTime.test(step.resumeAfter) ? step.resumeAfter : undefined };
   }
   if (values.transport === 'car' || values.transport === 'transit' || values.transport === 'walk' ||

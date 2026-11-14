@@ -285,6 +285,15 @@ const firstStop = 'Утренний спектакль';
 const secondStop = 'Выставка после обеда';
 const earlyExhibition = 'Выставка во время спектакля';
 const planTitles = [firstStop, earlyExhibition, secondStop];
+const eveningPlanDay = '2027-02-05';
+const eveningTheatre = 'Вечерний балет';
+const earlierExhibition = 'Дневная выставка';
+const eveningSlots = [
+  { title: earlierExhibition, start: '12:00', end: '13:00', category: 'exhibition' },
+  { title: 'Выставка без времени окончания', start: '10:00', category: 'exhibition' },
+  { title: 'Выставка в начале балета', start: '11:00', end: '18:30', category: 'exhibition' },
+  { title: eveningTheatre, start: '18:00', end: '20:10', category: 'theatre' },
+];
 
 function importPlanEvents() {
   const slots = [['10:00', '11:55', 'theatre'], ['11:00', '12:00', 'exhibition'], ['12:25', '13:15', 'exhibition']];
@@ -294,7 +303,12 @@ function importPlanEvents() {
     status: 'published', sourceName: 'Controlled planner fixture', sourceKey: `planner-${index}`,
     sourceType: 'import', sourceUrl: 'https://example.org/planner', raw: null,
   }));
-  const report = catalog.importEvents([...originals, { ...originals[0], title: 'Другая дата', sourceKey: 'planner-other-day',
+  const eveningEvents = eveningSlots.map(({ title, start, end, category }, index) => ({
+    ...originals[0], title, category, sourceKey: `planner-evening-${index}`, venue: `Площадка вечернего плана ${index + 1}`,
+    startsAt: `${eveningPlanDay}T${start}:00+05:00`, endsAt: end ? `${eveningPlanDay}T${end}:00+05:00` : undefined,
+    latitude: 54.71 + index * .01,
+  }));
+  const report = catalog.importEvents([...originals, ...eveningEvents, { ...originals[0], title: 'Другая дата', sourceKey: 'planner-other-day',
     startsAt: '2027-02-04T10:00:00+05:00', endsAt: '2027-02-04T11:00:00+05:00' }]);
   assert.deepEqual(report.rejected, []);
 }
@@ -475,6 +489,40 @@ async function checkDayPlan(page, mapsMode) {
   assert.equal(await plan.getByRole('button', { name: `Убрать из плана: ${secondStop}` }).count(), 0);
 }
 
+async function checkEarlierStop(page) {
+  await page.route('**/api/v1/maps/config', route => route.fulfill({ json: {} }));
+  await page.route(url => url.origin === 'https://yandex.ru' && url.pathname === '/map-widget/v1/', route =>
+    route.fulfill({ contentType: 'text/html', body: '<p>Карта маршрута</p>' }));
+  const initial = await submit(page, `Подбери два события в Уфе ${eveningPlanDay}, на машине`);
+  assert.equal(initial.events.length, 0);
+  const evening = await submit(page, 'Спектакли');
+  assert.deepEqual(evening.events.map(event => event.title), [eveningTheatre]);
+  const continuePlan = await discoveryTurn(page, () => evening.turn.getByRole('button', { name: 'Добавить в план' }).click());
+  assert.equal(continuePlan.result.status, 'clarify');
+  assert.equal(continuePlan.events.length, 0);
+  assert.match(continuePlan.result.message, /\b18:00\b/u);
+  assert.match(continuePlan.result.message, /(?:[\s«]до |раньше|перед)/iu);
+
+  const earlierReply = await submit(page, 'а что будет ранее во дне');
+  assert.notEqual(earlierReply.result.status, 'no_results');
+  assert.doesNotMatch(earlierReply.result.context.preference ?? '', /ранее во дне/u);
+  const earlier = earlierReply.events.length ? earlierReply : await submit(page, 'Выставки');
+  assert.deepEqual(earlier.events.map(event => event.title), [earlierExhibition]);
+  assert.ok(Date.parse(earlier.events[0].endsAt) < Date.parse(evening.events[0].startsAt));
+  await discoveryTurn(page, () => earlier.turn.getByRole('button', { name: 'Добавить в план' }).click());
+
+  const plan = page.locator('#event-plan');
+  await plan.locator('#event-plan-toggle').click();
+  const ordered = plan.getByRole('list', { name: 'События по времени' });
+  assert.deepEqual(await ordered.getByRole('link').allTextContents(), [earlierExhibition, eveningTheatre]);
+  await plan.getByRole('button', { name: 'Построить маршрут', exact: true }).click();
+  const routeLink = plan.getByRole('link', { name: 'Открыть в Яндекс Картах' });
+  await routeLink.waitFor();
+  const route = new URL(await routeLink.getAttribute('href'));
+  assert.deepEqual(route.searchParams.get('rtext').split('~').map(point => point.split(',').map(Number)),
+    [earlier.events[0], evening.events[0]].map(event => [event.latitude, event.longitude]));
+}
+
 async function runCase(name, run, origin, planning = false) {
   const context = await browser.newContext({ viewport: { width: 375, height: 850 } });
   const page = await context.newPage();
@@ -546,7 +594,12 @@ try {
     page => checkDayPlan(page, 'no-key'), plannerOrigin, true);
   const rejectedKey = await runCase('planner embeds the same route when the Yandex SDK fails',
     page => checkDayPlan(page, 'failed-sdk'), plannerOrigin, true);
-  process.exitCode = passes === cases.length && voice && planner && familyWeekday && mapped && noKey && rejectedKey ? 0 : 1;
+  await web.close();
+  await api.close();
+  const eveningOrigin = await startFixture();
+  const earlierStop = await runCase('planner fills the time before a saved evening event and routes in chronological order',
+    checkEarlierStop, eveningOrigin, true);
+  process.exitCode = passes === cases.length && voice && planner && familyWeekday && mapped && noKey && rejectedKey && earlierStop ? 0 : 1;
 } finally {
   await browser?.close();
   await web?.close();

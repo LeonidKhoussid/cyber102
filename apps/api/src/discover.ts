@@ -27,6 +27,10 @@ const continuePlan = 'Что дальше по плану?';
 const anyFormat = 'Любой формат';
 const addAnotherStop = 'Добавить ещё событие';
 const finishPlan = 'Завершить план';
+const earlierStop = 'Что есть раньше?';
+const laterStop = 'Что есть позже?';
+const beforeStop = /(?:^| )(?:раньше|пораньше|ранее|до (?:этого|первого|выбранного|сохраненного) (?:события|мероприятия|спектакля)|до (?:него|нее|спектакля|концерта|выставки|сеанса)|перед (?:ним|ней|этим|событием|спектаклем|концертом)|в первой половине дня)(?= |$)/u;
+const afterStop = /(?:^| )(?:позже|попозже|позднее|после (?:него|нее|этого|спектакля|концерта|выставки|сеанса))(?= |$)/u;
 const planFormats = ['Выставки', 'Спектакли', 'Концерты', 'Кино', 'Экскурсии', 'Фестивали'];
 const noFormatPreference = /^(?:любой формат|любые варианты|что угодно|без разницы|все равно|не знаю|на твой выбор)$/u;
 type DiscoveryOptions = { planExperience?: boolean; guidedPlan?: boolean; selectedEventIds?: unknown };
@@ -50,6 +54,16 @@ function clearStopPreferences(context: DiscoveryContext) {
 function samePlace(first: CatalogEvent, second: CatalogEvent) {
   return normalizeText(first.venue) === normalizeText(second.venue) &&
     (!first.address || !second.address || normalizeText(first.address) === normalizeText(second.address));
+}
+
+function fitsBetween(event: CatalogEvent, previous?: CatalogEvent, next?: CatalogEvent, previousEnd = previous?.endsAt ? Date.parse(previous.endsAt) : undefined) {
+  const start = Date.parse(event.startsAt);
+  if (previous && (previousEnd === undefined || !Number.isFinite(previousEnd) || previousEnd > start ||
+      previousEnd === start && !samePlace(previous, event))) return false;
+  if (!next) return true;
+  const end = event.endsAt ? Date.parse(event.endsAt) : NaN;
+  const nextStart = Date.parse(next.startsAt);
+  return start < nextStart && Number.isFinite(end) && end > start && (end < nextStart || end === nextStart && samePlace(event, next));
 }
 
 function dayShortlist<T>(options: T[], eventFor: (option: T) => CatalogEvent, limit: number, spread: boolean): T[] {
@@ -218,6 +232,13 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
     const completePlan = guidedPlan && words === normalizeText(finishPlan);
     const startAtFirstEvent = guidedPlan && previous.planMode === 'day' && words === 'начать с первого события';
     const planCommand = advance || skipFormat || extendPlan || completePlan || startAtFirstEvent;
+    const hasSelectedStops = guidedPlan && eventIds(selectedEventIds).length > 0;
+    const directionWords = normalizeText(message.replace(/[«"][^»"]+[»"]/gu, ' '))
+      .replace(/(?:не|или) (?:раньше|позже)|не позднее/gu, '');
+    const direction = hasSelectedStops && beforeStop.test(directionWords) ? 'before' :
+      hasSelectedStops && afterStop.test(directionWords) ? 'after' : undefined;
+    const directionOnly = direction && !/\d|[«"]/u.test(message) &&
+      !/выстав|спектакл|кино|концерт|экскурси|фестиваль|музе|хочется|люблю/u.test(directionWords.replace(direction === 'before' ? beforeStop : afterStop, ' '));
     const bareTime = /^(?:в\s+)?([01]?\d|2[0-3]):([0-5]\d)[.!?]?$/iu.exec(message.trim());
     const timeReply = guidedPlan && previous.planStep?.phase === 'question' && bareTime
       ? `${bareTime[1].padStart(2, '0')}:${bareTime[2]}` : undefined;
@@ -242,7 +263,10 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
         ? 'На один день можно выбрать от одного до четырёх событий. Сколько событий ищем?'
         : constraintIssue(message, planning);
     if (issue) return { status: 'clarify', message: issue, suggestions: [], events: [], context: previous, constraints: constraints(previous) };
-    const local = planCommand ? { ...previous } : ageReply === undefined ? readIntent(message, previous, cities, now, venues, planning) : { ...previous, childAge: ageReply };
+    const intentPrior = direction && (directionOnly || previous.planStep?.position !== direction) ? { ...previous } : previous;
+    if (intentPrior !== previous) clearStopPreferences(intentPrior);
+    const local = planCommand || directionOnly ? { ...intentPrior } : ageReply === undefined
+      ? readIntent(message, intentPrior, cities, now, venues, planning) : { ...intentPrior, childAge: ageReply };
     if (startAtFirstEvent) delete local.origin;
     if (timeReply) {
       local.earliestStart = timeReply;
@@ -272,11 +296,11 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
     const planningReply = planning && (local.planMode !== previous.planMode || local.planCount !== previous.planCount ||
       local.transport !== previous.transport || local.origin !== previous.origin);
     const awaitingPlanInput = planning && (!local.city || !local.planMode || local.planMode === 'day' && (!local.date || !local.transport));
-    if (interpret && !planCommand && !timeReply && ageReply === undefined && !relax && !resetOnly && !cityOnly && !preferenceReply &&
+    if (interpret && !planCommand && !directionOnly && !timeReply && ageReply === undefined && !relax && !resetOnly && !cityOnly && !preferenceReply &&
         (!(planningReply || awaitingPlanInput) || words.length > 35 && local.origin === previous.origin)) {
       try {
         const interpreted = await interpret(message, previous, cities, localDate(now));
-        context = mergeIntent(message, previous, local, interpreted, cities, venues, now, planning);
+        context = mergeIntent(message, intentPrior, local, interpreted, cities, venues, now, planning);
       } catch {
         onInterpretFailure?.();
         modelUnavailable = true;
@@ -329,7 +353,18 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
     }
     let anchor: CatalogEvent | undefined;
     let anchorEnd: number | undefined;
+    let position: 'before' | 'after' = 'after';
+    let switchPosition: string | undefined;
     let needsPreference = false;
+    const fitsPlan = (event: CatalogEvent) => position === 'before' ? fitsBetween(event, undefined, anchor) : fitsBetween(event, anchor, undefined, anchorEnd);
+    async function* otherStops() {
+      const broad = { ...context };
+      clearStopPreferences(broad);
+      for await (const event of searchCandidates(broad, now)) {
+        if (!seen.has(event.id) && localDate(new Date(event.startsAt)) === context.date &&
+            Date.parse(event.startsAt) >= now.getTime() && !checkEvent(event, broad).length) yield event;
+      }
+    }
     if (sequential) {
       const selected = (await Promise.all(eventIds(selectedEventIds).map(id => catalog.getEvent(id))))
         .filter((event): event is CatalogEvent => Boolean(event && normalizeText(event.city) === normalizeText(context.city ?? '') &&
@@ -339,8 +374,9 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
       if (selected.some(event => event.status !== 'published')) {
         return respond('clarify', 'Одно из сохранённых событий недоступно. Уберите его из плана, чтобы продолжить.');
       }
-      anchor = selected.at(-1);
-      const anchorChanged = previous.planStep?.anchor !== anchor?.id || previous.city !== context.city || previous.date !== context.date;
+      const firstStop = selected[0];
+      const lastStop = selected.at(-1);
+      anchor = lastStop;
       const target = context.planCount ?? 2;
       if (extendPlan && selected.length >= target && selected.length < dayPlanLimit) context.planCount = selected.length + 1;
       if ((completePlan && selected.length) || selected.length >= (context.planCount ?? target)) {
@@ -349,23 +385,41 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
         return respond('matches', 'События сохранены. План готов.',
           selected.length < dayPlanLimit && !completePlan ? [addAnotherStop] : []);
       }
-      if (anchorChanged && (anchor || previous.planStep?.anchor)) clearStopPreferences(context);
+      // Discover which side still has real options before asking about a format.
+      if (firstStop && lastStop) {
+        const rememberedEnd = previous.planStep?.anchor === lastStop.id && previous.planStep.resumeAfter;
+        const lastEnd = lastStop.endsAt ? Date.parse(lastStop.endsAt) : rememberedEnd ? Date.parse(`${context.date}T${rememberedEnd}:00+05:00`) : undefined;
+        let before = false;
+        let after = false;
+        for await (const event of otherStops()) {
+          before ||= fitsBetween(event, undefined, firstStop);
+          after ||= fitsBetween(event, lastStop, undefined, lastEnd);
+          if (before && after) break;
+        }
+        const savedOffer = advance && selected.some(event => event.id === previous.planStep?.eventId);
+        position = direction ?? (!savedOffer && previous.planStep?.position ? previous.planStep.position : after || !before ? 'after' : 'before');
+        anchor = position === 'before' ? firstStop : lastStop;
+        switchPosition = position === 'after' && before ? earlierStop : position === 'before' && after ? laterStop : undefined;
+      }
+      const anchorChanged = previous.planStep?.anchor !== anchor?.id || previous.city !== context.city || previous.date !== context.date;
+      if ((advance || extendPlan || anchorChanged) && !direction && (anchor || previous.planStep?.anchor)) clearStopPreferences(context);
       const resumeAfter = !anchorChanged ? previous.planStep?.resumeAfter : undefined;
       const answerTime = anchor && !anchor.endsAt && !planCommand && (timeReply || /(?:после|не раньше|начало с)/u.test(words))
         ? context.earliestStart : undefined;
-      if (anchor) {
+      if (anchor && position === 'after') {
         const explicitEnd = answerTime ?? resumeAfter;
         anchorEnd = anchor.endsAt ? Date.parse(anchor.endsAt) : explicitEnd ? Date.parse(`${context.date}T${explicitEnd}:00+05:00`) : undefined;
         if (anchorEnd === undefined || !Number.isFinite(anchorEnd) || anchorEnd <= Date.parse(anchor.startsAt)) {
-          context.planStep = { phase: 'question', anchor: anchor.id };
-          return respond('clarify', `У «${anchor.title}» в афише нет подтверждённого времени окончания. Во сколько вы будете свободны? Например, «после 14:00».`);
+          context.planStep = { phase: 'question', anchor: anchor.id, position };
+          return respond('clarify', `У «${anchor.title}» в афише нет подтверждённого времени окончания. Во сколько вы будете свободны? Например, «после 14:00».`,
+            switchPosition ? [switchPosition] : []);
         }
-        context.planStep = { phase: 'question', anchor: anchor.id, resumeAfter: anchor.endsAt ? undefined : explicitEnd };
-      } else context.planStep = { phase: 'question' };
+        context.planStep = { phase: 'question', anchor: anchor.id, position, resumeAfter: anchor.endsAt ? undefined : explicitEnd };
+      } else context.planStep = { phase: 'question', anchor: anchor?.id, position: anchor ? position : undefined };
 
       const asking = previous.planStep?.phase === 'question' && !anchorChanged;
       const isFormat = planFormats.some(label => normalizeText(label) === words);
-      const administrative = planCommand || planningReply || previous.date !== context.date || previous.city !== context.city || ageReply !== undefined || relax;
+      const administrative = planCommand || directionOnly || planningReply || previous.date !== context.date || previous.city !== context.city || ageReply !== undefined || relax;
       if (skipFormat) {
         delete context.category;
         delete context.query;
@@ -377,7 +431,7 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
         context.preference = message.slice(0, 120);
       }
       const noNextPreference = !context.category && !context.query && (!context.preference || context.preference === 'Семейный досуг');
-      needsPreference = anchor ? anchorChanged || advance || extendPlan || Boolean(answerTime && noNextPreference) ||
+      needsPreference = anchor ? (anchorChanged && !direction || Boolean(directionOnly) || advance || extendPlan || Boolean(answerTime && noNextPreference)) ||
         (asking && administrative && !skipFormat && !answerTime && noNextPreference && !context.earliestStart) :
         !skipFormat && !more && !context.query && !context.category && !context.earliestStart &&
         (!context.preference || context.preference === 'Семейный досуг');
@@ -390,12 +444,12 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
     }
     function askStop(candidates: CatalogEvent[]) {
       const formats = [...new Set(candidates.map(event => event.category))].filter(category => category !== 'other').map(category => categories[category]);
-      const after = anchor && anchorEnd !== undefined ? `После «${anchor.title}» вы ${anchor.endsAt ? 'освободитесь' : 'будете свободны по вашему времени'} в ${time.format(new Date(anchorEnd))}. ` : '';
-      return respond('clarify', after + (anchor ? 'Что хотите дальше? Можно назвать формат, настроение или время.' :
-        'С чего хотите начать день? Можно назвать формат, настроение или удобное время.'),
-        [...formats.slice(0, 5), anyFormat, ...(anchor ? [finishPlan] : [])]);
+      const next = !anchor ? 'С чего хотите начать день? Можно назвать формат, настроение или удобное время.' : position === 'before'
+        ? `«${anchor.title}» начинается в ${time.format(new Date(anchor.startsAt))}. Что хотите посетить раньше? Можно назвать формат, настроение или время.`
+        : `После «${anchor.title}» вы ${anchor.endsAt ? 'освободитесь' : 'будете свободны по вашему времени'} в ${time.format(new Date(anchorEnd!))}. Что хотите дальше? Можно назвать формат, настроение или время.`;
+      return respond('clarify', next, [...formats.slice(0, 3), anyFormat, ...(switchPosition ? [switchPosition] : []), ...(anchor ? [finishPlan] : [])]);
     }
-    function offerStop(match: Match, unverified = false) {
+    function offerStop(match: Match, unverified = false, hasEarlierStop = false) {
       context.planStep = { ...context.planStep, phase: 'offer', eventId: match.event.id };
       context.seenEventIds = [...seen, match.event.id].slice(-100);
       context.referencePrice = totalCost(match.event, context);
@@ -405,7 +459,8 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
       const transfer = unverified || anchor && !samePlace(anchor, match.event)
         ? ' Проверьте время в пути при построении маршрута.' : '';
       const limit = unverified && context.travelMinutes !== undefined ? ` Лимит в ${context.travelMinutes} мин пока не подтверждён.` : '';
-      const text = `Предлагаю «${match.event.title}». ${end}${transfer}${limit} Добавить в план или поискать другой вариант?`;
+      const earlier = hasEarlierStop ? ' Если добавите это событие, подберём ещё одно до его начала.' : '';
+      const text = `Предлагаю «${match.event.title}». ${end}${transfer}${limit}${earlier} Добавить в план или поискать другой вариант?`;
       return unverified ? { ...respond('clarify', text, ['Другой вариант']), alternatives: [match] } :
         respond('matches', text, ['Другой вариант'], [match]);
     }
@@ -458,8 +513,7 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
       if (dayPlan && (localDate(new Date(event.startsAt)) !== context.date || Date.parse(event.startsAt) < now.getTime())) continue;
       found = true;
       if (seen.has(event.id)) continue;
-      if (anchor && anchorEnd !== undefined && (Date.parse(event.startsAt) < anchorEnd || Date.parse(event.startsAt) === anchorEnd &&
-        !samePlace(anchor, event))) continue;
+      if (!fitsPlan(event)) continue;
       const blocked = checkEvent(event, context);
       checked++;
       if (!blocked.some(reason => reason === 'unknownAge' || reason === 'unknownPrice' || reason === 'unknownEnd')) complete++;
@@ -529,14 +583,15 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
       if (!origin) {
         return routePreview(travelCandidates, anchor ? undefined : 'Не нашёл точку отправления в каталоге. Пришлите координаты или точное название площадки.');
       }
-      const estimates = await travel(origin, travelCandidates).catch(() => new Map<string, number>());
+      const estimates = await travel(origin, travelCandidates, position === 'before' ? 'to-anchor' : undefined).catch(() => new Map<string, number>());
       if (context.sortByDistance) travelCandidates.sort((first, second) =>
         (estimates.get(first.id) ?? Infinity) - (estimates.get(second.id) ?? Infinity));
       for (const event of travelCandidates) {
         const minutes = estimates.get(event.id);
         if (minutes === undefined) record('unknownTravel');
         else if (context.travelMinutes !== undefined && minutes > context.travelMinutes ||
-          anchorEnd !== undefined && anchorEnd + minutes * 60_000 > Date.parse(event.startsAt)) record('travel');
+          anchorEnd !== undefined && anchorEnd + minutes * 60_000 > Date.parse(event.startsAt) ||
+          anchor && position === 'before' && event.endsAt && Date.parse(event.endsAt) + minutes * 60_000 > Date.parse(anchor.startsAt)) record('travel');
         else matches.push({ event, reasons: explain(event, context, now, minutes) });
         if (!spreadDay && matches.length === candidateLimit) break;
       }
@@ -547,8 +602,29 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
     if (matches.length) {
       if (sequential) {
         const withEnding = matches.filter(({ event }) => event.endsAt);
-        const ranked = await rank(withEnding.length ? withEnding : matches, 1);
-        return offerStop(ranked.selected[0]);
+        let candidates = withEnding.length ? withEnding : matches;
+        let earlierCandidates: Set<string> | undefined;
+        let laterCandidates: Set<string> | undefined;
+        if (!anchor) {
+          const earlier = new Set<string>();
+          const later = new Set<string>();
+          for await (const option of otherStops()) {
+            for (const { event } of candidates) {
+              if (option.id === event.id) continue;
+              if (fitsBetween(option, event)) later.add(event.id);
+              if (fitsBetween(option, undefined, event)) earlier.add(event.id);
+            }
+            if (later.size === candidates.length) break;
+          }
+          earlierCandidates = earlier;
+          laterCandidates = later;
+          const canBuild = candidates.filter(({ event }) => later.has(event.id));
+          if (canBuild.length) candidates = canBuild;
+          else if (earlier.size) candidates = candidates.filter(({ event }) => earlier.has(event.id));
+        }
+        const ranked = await rank(candidates, 1);
+        const match = ranked.selected[0];
+        return offerStop(match, false, earlierCandidates?.has(match.event.id) && !laterCandidates?.has(match.event.id));
       }
       const shownLimit = context.planMode === 'single' ? 1 : 5;
       let matchingCities = [...new Set(matches.map(({ event }) => event.city))];
@@ -590,14 +666,15 @@ export function createDiscovery(catalog: CatalogStore, { clock = () => new Date(
         const alternatives = { ...context, category: undefined, query: undefined, venue: undefined, earliestStart: undefined };
         for await (const event of searchCandidates(alternatives, now)) {
           if (event.category === 'other' || seen.has(event.id) || localDate(new Date(event.startsAt)) !== context.date ||
-            Date.parse(event.startsAt) <= (anchorEnd ?? Infinity) || checkEvent(event, alternatives).length) continue;
+            Date.parse(event.startsAt) < now.getTime() || !fitsPlan(event) || checkEvent(event, alternatives).length) continue;
           formats.add(categories[event.category]);
           if (formats.size === 4) break;
         }
       }
-      const next = formats.size ? ' Попробуем другой формат?' : ' Можно оставить уже выбранные события.';
-      return respond('no_results', `После «${anchor.title}» не нашёл ещё одного события на этот день по вашим условиям.${next}`,
-        [...(formats.size ? [...formats, anyFormat] : []), finishPlan]);
+      const next = formats.size ? ' Попробуем другой формат?' : switchPosition ? (position === 'after'
+        ? ' В каталоге есть варианты до его начала.' : ' В каталоге есть варианты после него.') : ' Можно оставить уже выбранные события.';
+      return respond('no_results', `${position === 'before' ? 'До начала' : 'После'} «${anchor.title}» не нашёл ещё одного события на этот день по вашим условиям.${next}`,
+        [...(formats.size ? [...formats, anyFormat] : []), ...(switchPosition ? [switchPosition] : []), finishPlan]);
     }
     async function firstAlternative(filters: DiscoveryContext, includeDates: boolean) {
       if (filters.travelMinutes || filters.sortByDistance || (filters.child && filters.childAge === undefined)) return;

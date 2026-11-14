@@ -17,6 +17,39 @@ const sample: SourceEvent = {
 
 const planExperience = { planExperience: true };
 
+test('guided planning favors a viable daytime start, but can build backwards around an evening anchor', async () => {
+  const catalog = openCatalog(':memory:', clock);
+  try {
+    catalog.importEvents([
+      { ...sample, title: 'Вечерняя постановка', startsAt: '2026-11-14T18:00:00+05:00', sourceKey: 'evening' },
+      { ...sample, title: 'Дневной спектакль', startsAt: '2026-11-14T11:00:00+05:00', endsAt: '2026-11-14T12:30:00+05:00', sourceKey: 'early' },
+      { ...sample, title: 'Выставка с неизвестным окончанием', category: 'exhibition', startsAt: '2026-11-14T10:00:00+05:00', endsAt: undefined, sourceKey: 'unknown' },
+      { ...sample, title: 'Дневная выставка', category: 'exhibition', startsAt: '2026-11-14T12:00:00+05:00', endsAt: '2026-11-14T15:00:00+05:00', sourceKey: 'exhibition' },
+      { ...sample, title: 'Выставка без пересадки', venue: 'Дальний зал', category: 'exhibition', startsAt: '2026-11-14T16:00:00+05:00', endsAt: '2026-11-14T18:00:00+05:00', sourceKey: 'tight' },
+    ]);
+    const discover = createDiscovery(catalog, { clock, recommend: async (_message, _context, candidates) => ({
+      picks: [...candidates].reverse().map(event => ({ id: event.id })),
+    }) });
+    const options = { ...planExperience, guidedPlan: true };
+    const base = await discover('Два события в Стерлитамаке 14 ноября на машине', undefined, options);
+    const daytime = await discover('Спектакли', base.context, options);
+    assert.equal(daytime.events[0]?.event.title, 'Дневной спектакль');
+    const evening = await discover('Спектакль «Вечерняя постановка»', base.context, options);
+    assert.equal(evening.events[0]?.event.title, 'Вечерняя постановка');
+    assert.match(evening.message, /до его начала/u);
+    const saved = { ...options, selectedEventIds: [evening.events[0].event.id] };
+    const after = await discover('Что дальше по плану?', evening.context, saved);
+    assert.equal(after.status, 'clarify');
+    assert.equal(after.context.planStep?.position, 'before');
+    assert.match(after.message, /18:00.*раньше/u);
+    const earlier = await discover('а что будет ранее во дне', after.context, saved);
+    assert.equal(earlier.context.query, undefined);
+    assert.equal(earlier.context.preference, undefined);
+    const exhibition = await discover('Выставки', earlier.context, saved);
+    assert.deepEqual(exhibition.events.map(({ event }) => event.title), ['Дневная выставка']);
+  } finally { catalog.close(); }
+});
+
 test('guided day plan asks for each stop and ranks only after the saved event ends', async () => {
   const catalog = openCatalog(':memory:', clock);
   try {
