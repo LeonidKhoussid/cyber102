@@ -103,8 +103,8 @@ function nextPointKey(point: ResolvablePoint) {
   return Array.isArray(point) ? point.join(',') : point.address.toLocaleLowerCase('ru-RU').replace(/\s+/g, ' ');
 }
 
-function yandexMapsLink(points: ResolvablePoint[], mode: RouteMode) {
-  const url = new URL('https://yandex.ru/maps/');
+function yandexMapsLink(points: ResolvablePoint[], mode: RouteMode, widget = false) {
+  const url = new URL(widget ? 'https://yandex.ru/map-widget/v1/' : 'https://yandex.ru/maps/');
   const rtext = points.map(point => Array.isArray(point) ? point.join(',') : point.address.replaceAll('~', ' ')).join('~');
   url.search = new URLSearchParams({ mode: 'routes', rtext, rtt: linkModes[mode] }).toString();
   return url.href;
@@ -272,6 +272,8 @@ export function YandexRoute({ apiKey, mode, origin, stops, onResult }: {
   const key = apiKey?.trim() || '';
   const requestId = JSON.stringify([mode, serializedPoints, attempt, Boolean(key)]);
   const active = state?.id === requestId ? state : undefined;
+  const widget = validPoints && (!key || (active && !active.result && !active.unresolvedAddress))
+    ? yandexMapsLink(validPoints, mode, true) : null;
   const stationary = validPoints?.every(point => nextPointKey(point) === nextPointKey(validPoints[0]));
 
   useEffect(() => {
@@ -321,15 +323,16 @@ export function YandexRoute({ apiKey, mode, origin, stops, onResult }: {
       aria-hidden={!active?.result || undefined}
       inert={!active?.result || undefined}
     />}
+    {widget && <iframe className="yandex-route-map" title="Интерактивная карта маршрута" src={widget} />}
     <div className="yandex-route-status" aria-live="polite">
       {!stops.length ? null
         : missing.length ? <p>Для маршрута нужны адреса: {missing.map(location => location.label).join(', ')}.</p>
           : !validPoints ? <p>Можно добавить до четырёх остановок.</p>
-            : !key ? <p>Время в пути и карту можно посмотреть в Яндекс Картах.</p>
+            : !key ? null
               : !active ? <p>Строим маршрут…</p>
                 : active.result ? <p><strong>В пути около {formatRouteDuration(active.result.durationSeconds)}</strong>{active.result.distanceMeters !== null && ` · ${formatDistance(active.result.distanceMeters)}`}</p>
                   : active.unresolvedAddress ? <p>Яндекс Карты не нашли точный адрес «{active.unresolvedAddress}». Уточните адрес или используйте координаты.</p>
-                    : <p>Яндекс Карты не рассчитали маршрут. <button type="button" onClick={() => setAttempt(value => value + 1)}>Повторить</button></p>}
+                    : <p>Оценки для отдельных участков недоступны. <button type="button" onClick={() => setAttempt(value => value + 1)}>Повторить</button></p>}
       {active?.result && !stationary && <p>Оценка по текущим условиям.</p>}
       {mode === 'taxi' && active?.result && <p>Оценка по автомобильному маршруту. Добавьте время на подачу такси.</p>}
     </div>

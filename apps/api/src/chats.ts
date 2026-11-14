@@ -6,13 +6,13 @@ import { accountError, allowAccountOrigin, getSession, withAccountTransaction } 
 import type { AccountUser } from './accounts.ts';
 import type { createDiscovery } from './discover.ts';
 import type { CatalogStore } from './catalog.ts';
-import { initializeEventPlans, registerEventPlans } from './event-plans.ts';
+import { initializeEventPlans, registerEventPlans, selectedEventIds } from './event-plans.ts';
 
 type ChatRow = { id: string; title: string | null; created_at: Date; updated_at: Date };
 type TurnRow = { request_id: string; message: string; response: DiscoveryResponse; created_at: Date | string };
 type ChatParams = { id: string };
 type TitleBody = { title?: unknown };
-type TurnBody = { message?: unknown; requestId?: unknown; planExperience?: unknown };
+type TurnBody = { message?: unknown; requestId?: unknown; planExperience?: unknown; guidedPlan?: unknown };
 
 const chatColumns = 'id, title, created_at, updated_at';
 const turnColumns = 'request_id, message, response, created_at';
@@ -176,7 +176,9 @@ export function registerChats(server: FastifyInstance, pool: Pool, options: {
           SELECT response->'context' AS context FROM account_chat_turns
           WHERE chat_id = $1 ORDER BY position DESC LIMIT 1
         `, [id]);
-        const response = await options.discover(message, prior?.context, { planExperience: request.body?.planExperience === true });
+        const guidedPlan = request.body?.guidedPlan === true;
+        const response = await options.discover(message, prior?.context, { planExperience: request.body?.planExperience === true, guidedPlan,
+          selectedEventIds: guidedPlan ? await selectedEventIds(client, id) : undefined });
         const { rows: [turn] } = await client.query<TurnRow>(`
           INSERT INTO account_chat_turns (chat_id, request_id, message, response)
           VALUES ($1, $2, $3, $4)

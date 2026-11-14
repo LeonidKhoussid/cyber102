@@ -14,6 +14,7 @@ const prompts = [
   'Какие выставки в Уфе на выходных?',
   'Составь план на субботу в Уфе',
 ];
+const nextPlanPrompt = 'Что дальше по плану?';
 
 type Turn = { message: string; answer?: DiscoveryResponse; error?: string; requestId?: string };
 type SavedExchange = { chat: Chat; turn: SavedTurn };
@@ -134,7 +135,8 @@ function Answer({ answer, selectSuggestion, active, cardAction, planLink, busy }
   const hasAlternatives = Boolean(answer.alternatives?.length);
   return <>
     <h2 className="answer-label"><span className="answer-mark"><Icon name="mark" /></span>
-      <span>{answer.status === 'matches' ? 'Подборка событий' : hasAlternatives ? 'Варианты без проверки дороги' : answer.status === 'clarify' ? 'Нужно уточнение' : 'События не найдены'}</span>
+      <span>{answer.status === 'matches' ? (answer.context.planStep?.phase === 'offer' ? 'Предложение для плана' : 'Подборка событий')
+        : hasAlternatives ? 'Варианты без проверки дороги' : answer.status === 'clarify' ? 'Нужно уточнение' : 'События не найдены'}</span>
     </h2>
     <p className="answer-message">{answer.message}</p>
     {answer.constraints.length > 0 && <dl className="constraints" aria-label="Учтённые условия">{answer.constraints.map(({ label, value }) =>
@@ -171,12 +173,15 @@ export function Discovery() {
   const [drawer, setDrawer] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [chatAction, setChatAction] = useState<ChatAction>();
+  const [planOpen, setPlanOpen] = useState(false);
+  const [planWriting, setPlanWriting] = useState(false);
   const user = session?.user;
   const plan = useEventPlan(user?.id, chatId);
   const mobile = useMobileSidebar();
   const turns = user ? accountTurns : guestTurns;
   const setTurns = user ? setAccountTurns : setGuestTurns;
   const controller = useRef<AbortController | null>(null);
+  const planWrite = useRef<object | null>(null);
   const openingChat = useRef<AbortController | null>(null);
   const sessionCheck = useRef<AbortController | null>(null);
   const savingChats = useRef(new Map<string, Promise<SavedExchange>>());
@@ -204,6 +209,7 @@ export function Discovery() {
   useEffect(() => () => {
     controller.current?.abort();
     openingChat.current?.abort();
+    planWrite.current = null;
   }, []);
   useEffect(() => {
     if (authFromUrl() === 'login' && telegramStatus() !== null) setAuthRoute('login', true);
@@ -296,6 +302,9 @@ export function Discovery() {
     controller.current = null;
     openingChat.current?.abort();
     openingChat.current = null;
+    planWrite.current = null;
+    setPlanWriting(false);
+    setPlanOpen(false);
     setDraft('');
     setChatLoading(false);
     setChatError(undefined);
@@ -402,17 +411,18 @@ export function Discovery() {
     setChatAction(undefined);
   }
 
-  async function send(message: string, retry = false) {
+  async function send(message: string, retry = false, updatedPlan?: CatalogEvent[]) {
     const cleaned = message.trim();
-    if (!cleaned || controller.current || voiceBusy || chatLoading || chatError || checkingSession || signingOut) return;
+    if (!cleaned || controller.current || planWrite.current || voiceBusy || chatLoading || chatError || checkingSession || signingOut) return;
     const context = turns.findLast(turn => turn.answer)?.answer?.context;
+    const selectedEventIds = (updatedPlan ?? plan.events).map(event => event.id);
     const active = new AbortController();
     controller.current = active;
     const requestId = user ? (retry ? turns.at(-1)?.requestId : undefined) ??
       [...crypto.getRandomValues(new Uint8Array(16))].map(byte => byte.toString(16).padStart(2, '0')).join('') : undefined;
     const turn = { message: cleaned, requestId };
     setTurns(previous => [...(retry || (user && previous.at(-1)?.error) ? previous.slice(0, -1) : previous), turn]);
-    if (!retry) setDraft('');
+    if (!retry && !updatedPlan) setDraft('');
     try {
       let answer: DiscoveryResponse;
       if (user) {
@@ -428,7 +438,7 @@ export function Discovery() {
           rememberChat(chat);
         }
         const saving = request<SavedExchange>(chatsPath + '/' + encodeURIComponent(id) + '/turns',
-          jsonBody('POST', { message: cleaned, requestId, planExperience: true }));
+          jsonBody('POST', { message: cleaned, requestId, planExperience: true, guidedPlan: true }));
         savingChats.current.set(id, saving);
         try {
           const saved = await saving;
@@ -439,7 +449,7 @@ export function Discovery() {
         }
       } else {
         answer = await request<DiscoveryResponse>('/api/v1/discover', {
-          ...jsonBody('POST', { message: cleaned, context, planExperience: true }), signal: active.signal,
+          ...jsonBody('POST', { message: cleaned, context, planExperience: true, guidedPlan: true, selectedEventIds }), signal: active.signal,
         });
       }
       if (!active.signal.aborted) setTurns(previous => [...previous.slice(0, -1), { ...turn, answer }]);
@@ -486,28 +496,47 @@ export function Discovery() {
     onClose={closeHistory} onNew={reset} onSelect={id => void openChat(id)} onAction={setChatAction}
     onRetry={() => setHistoryAttempt(previous => previous + 1)} onLogout={() => void signOut()} />;
   const unavailable = checkingSession || chatLoading || Boolean(chatError) || signingOut;
-  const busy = unavailable || pending || voiceBusy;
+  const busy = unavailable || pending || voiceBusy || planWriting || Boolean(plan.saving);
   const showPlan = Boolean(firstSaved || latestContext?.planMode === 'day' || plan.loadError);
   const differentPlan = Boolean(firstSaved && (
     (latestContext?.city && locationKey(latestContext.city) !== locationKey(firstSaved.city)) ||
     (latestContext?.date && latestContext.date !== eventLocalDay(firstSaved))));
   const canEditRoute = !differentPlan && latestContext?.planMode === 'day';
+  const offeredId = latestContext?.planStep?.phase === 'offer' ? latestContext.planStep.eventId : undefined;
+  const offeredContext = offeredId ? turns.findLast(({ answer }) => answer &&
+    (answer.events.length ? answer.events : answer.alternatives ?? []).some(({ event }) => event.id === offeredId))?.answer?.context : undefined;
+
+  async function changePlan(event: CatalogEvent, date: string, remove: boolean, advance = false) {
+    if (busy || planWrite.current || controller.current) return;
+    const active = {};
+    planWrite.current = active;
+    setPlanWriting(true);
+    const events = await plan.toggle(event, date, remove);
+    if (planWrite.current !== active) return;
+    planWrite.current = null;
+    setPlanWriting(false);
+    if (!events) setPlanOpen(true);
+    else if (advance && !remove) void send(nextPlanPrompt, false, events);
+  }
 
   function cardPlanAction(event: CatalogEvent, context: DiscoveryContext) {
     const saved = plan.events.some(item => item.id === event.id);
     if (!saved && (context.planMode !== 'day' || !context.date)) return;
+    const activeOffer = canEditRoute && latestContext?.date === context.date && offeredId === event.id && offeredContext === context;
+    if (!saved && (context.planStep || latestContext?.planStep) && !activeOffer) return;
     const date = context.date ?? eventLocalDay(event);
     const reason = saved ? undefined : planRejection(plan.events, event, date);
     return <div className="event-plan-action">
-      <button type="button" className="prompt-chip" aria-pressed={saved} disabled={unavailable || plan.loading || Boolean(plan.loadError || plan.saving || reason)}
-        onClick={() => void plan.toggle(event, date, saved)}><Icon name={saved ? 'close' : 'plus'} />{saved ? 'Убрать из плана' : 'Добавить в план'}</button>
+      <button type="button" className="prompt-chip" aria-pressed={saved} disabled={busy || plan.loading || Boolean(plan.loadError || reason)}
+        onClick={() => void changePlan(event, date, saved, activeOffer)}><Icon name={saved ? 'close' : 'plus'} />{saved ? 'Убрать из плана' : 'Добавить в план'}</button>
       {reason && <small>{reason}</small>}
     </div>;
   }
 
   function jumpToPlan() {
+    setPlanOpen(true);
     const element = document.getElementById('event-plan');
-    element?.focus({ preventScroll: true });
+    document.getElementById('event-plan-toggle')?.focus({ preventScroll: true });
     element?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
   }
 
@@ -548,10 +577,10 @@ export function Discovery() {
             </section>;
           })}
         </div>
-        {!chatLoading && !chatError && showPlan && <EventPlan plan={plan} context={planContext} waiting={busy} differentPlan={differentPlan}
+        {!chatLoading && !chatError && showPlan && <EventPlan plan={plan} context={planContext} open={planOpen} onToggle={() => setPlanOpen(previous => !previous)} waiting={busy} differentPlan={differentPlan}
           canEditRoute={canEditRoute} knownLocations={knownLocations}
-          onRemove={event => void plan.toggle(event, eventLocalDay(event), true)} onOrigin={editPlanOrigin}
-          onTransport={text => void send(text)} />}
+          onRemove={event => void changePlan(event, eventLocalDay(event), true)} onOrigin={editPlanOrigin}
+          onResetOrigin={() => void send('Начать с первого события')} onTransport={text => void send(text)} />}
       </>}
       {!chatLoading && !chatError && <div className="composer-area">
         <form className="composer" aria-label="Поиск по вопросу" onSubmit={submit}>
@@ -562,10 +591,10 @@ export function Discovery() {
             <div className="composer-actions">
               <button className="send voice-button" type="button" aria-label={recording ? 'Остановить запись' : 'Записать голосом'}
                 title={recording ? 'Остановить запись' : 'Записать голосом'} aria-pressed={recording}
-                disabled={unavailable || pending || (voiceBusy && !recording)} onClick={() => recording ? voice.stop() : void voice.start()}>
+                disabled={unavailable || pending || planWriting || plan.saving || (voiceBusy && !recording)} onClick={() => recording ? voice.stop() : void voice.start()}>
                 <Icon name={recording ? 'stop' : 'mic'} />
               </button>
-              <button className="send" type="submit" aria-label="Отправить вопрос" disabled={unavailable || !draft.trim() || pending || voiceBusy}>
+              <button className="send" type="submit" aria-label="Отправить вопрос" disabled={busy || !draft.trim()}>
                 {pending ? <span className="spinner" /> : <Icon name="up" />}
               </button>
             </div>

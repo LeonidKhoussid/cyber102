@@ -6,6 +6,7 @@
 }
 
 .yandex-route-map {
+  display: block;
   width: 100%;
   height: clamp(14rem, 38vw, 22rem);
   overflow: hidden;

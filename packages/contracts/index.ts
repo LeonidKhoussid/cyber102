@@ -34,6 +34,7 @@ export type DiscoveryContext = {
   latestEnd?: string; earliestStart?: string; childAge?: number; child?: boolean; partySize?: number;
   preference?: string; awaitingPreference?: boolean;
   planMode?: 'single' | 'day'; planCount?: number; transport?: PlanTransport;
+  planStep?: { anchor?: string; phase: 'question' | 'offer'; eventId?: string; resumeAfter?: string };
   budget?: number; travelMinutes?: number; origin?: string; free?: boolean; cheaperThan?: number; referencePrice?: number; seenEventIds?: string[]; query?: string;
 };
 

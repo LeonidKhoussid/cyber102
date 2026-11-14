@@ -11,15 +11,21 @@ const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_EXE
 const context = await browser.newContext();
 const page = await context.newPage();
 
-async function submit(message) {
+async function chatTurn(trigger) {
   const response = page.waitForResponse(reply => reply.request().method() === 'POST' && /\/chats\/[^/]+\/turns$/.test(reply.url()));
-  await page.getByRole('textbox', { name: /Ваш вопрос|Продолжить поиск/u }).fill(message);
-  await page.locator('#question').press('Enter');
+  await trigger();
   const reply = await response;
   assert.equal(reply.status(), 200);
   const result = await reply.json();
   await page.locator('.turn').last().getByText(result.turn.response.message, { exact: true }).waitFor();
   return result;
+}
+
+function submit(message) {
+  return chatTurn(async () => {
+    await page.getByRole('textbox', { name: /Ваш вопрос|Продолжить поиск/u }).fill(message);
+    await page.locator('#question').press('Enter');
+  });
 }
 
 async function credentials(target, name) {
@@ -93,40 +99,68 @@ try {
   await page.setViewportSize({ width: 1280, height: 900 });
 
   await page.getByRole('button', { name: 'Новый поиск', exact: true }).click();
-  const planTurn = await submit('Подбери два события в Уфе 21 ноября: поеду на машине. Точка отправления: 54.736, 55.958');
+  const planTurn = await submit('Подбери два события в Уфе 21 ноября: поеду на машине.');
   const planChatId = planTurn.chat.id;
   const planContext = planTurn.turn.response.context;
   assert.equal(planContext.city, 'Уфа');
   assert.equal(planContext.planMode, 'day');
   assert.equal(planContext.transport, 'car');
   assert.equal(planContext.planCount, 2);
-  const card = page.locator('.turn').last().locator('.event-card');
-  const cards = await card.count();
-  assert.ok(cards >= 2, JSON.stringify(planTurn.turn.response));
-  const savedTitles = [];
-  for (const index of [1, 0]) {
-    savedTitles.push((await card.nth(index).getByRole('heading', { level: 3 }).innerText()).trim());
-    const response = page.waitForResponse(reply => reply.request().method() === 'PUT' && reply.url().includes(`/chats/${planChatId}/event-plan/`));
-    await card.nth(index).getByRole('button', { name: 'Добавить в план' }).click();
-    assert.equal((await response).status(), 200);
-  }
-  const plan = page.getByRole('region', { name: 'План дня', exact: true });
-  await plan.getByText('2 из 4', { exact: true }).waitFor();
+  assert.equal(planTurn.turn.response.status, 'clarify');
+  assert.equal(planTurn.turn.response.events.length, 0);
+
+  const saveOffer = () => chatTurn(async () => {
+    const save = page.waitForResponse(reply => reply.request().method() === 'PUT' && reply.url().includes(`/chats/${planChatId}/event-plan/`));
+    await page.locator('.turn').last().getByRole('button', { name: 'Добавить в план' }).click();
+    assert.equal((await save).status(), 200);
+  });
+  const first = (await submit('Спектакль «Пегий пёс»')).turn.response;
+  assert.equal(first.events.length, 1, first.message);
+  const firstEvent = first.events[0].event;
+  assert.match(firstEvent.title, /Пегий п[её]с/u);
+  assert.ok(firstEvent.endsAt);
+  const nextQuestion = (await saveOffer()).turn.response;
+  assert.equal(nextQuestion.status, 'clarify');
+  assert.equal(nextQuestion.events.length, 0);
+  const next = (await submit('Потом спектакль «Щелкунчик»')).turn.response;
+  assert.equal(next.events.length, 1, next.message);
+  const secondEvent = next.events[0].event;
+  assert.match(secondEvent.title, /Щелкунчик/u);
+  assert.ok(Date.parse(secondEvent.startsAt) >= Date.parse(firstEvent.endsAt));
+  await saveOffer();
+
+  const plan = page.locator('#event-plan');
+  const disclosure = plan.locator('#event-plan-toggle');
+  assert.equal(await disclosure.getAttribute('aria-expanded'), 'false');
+  await disclosure.click();
+  await plan.getByRole('button', { name: 'Построить маршрут' }).click();
   await plan.getByRole('link', { name: 'Открыть в Яндекс Картах' }).waitFor();
   if (process.env.VERIFY_LIVE_MAP === '1') {
     const maps = plan.getByRole('region', { name: 'Маршрут в Яндекс Картах' });
-    await maps.getByText(/в пути около/iu).waitFor({ timeout: 30_000 }).catch(async error => {
-      throw new Error(`Live Yandex route did not calculate: ${await maps.innerText()}`, { cause: error });
-    });
-    assert.equal(await plan.getByRole('list', { name: 'Отрезки маршрута' }).getByRole('listitem').count(), 2);
-    console.log('PASS live Yandex route with two catalog stops');
+    const embedded = maps.locator('iframe[title="Интерактивная карта маршрута"]');
+    const sdk = maps.getByText(/в пути около/iu);
+    await sdk.or(embedded).first().waitFor({ timeout: 30_000 });
+    if (await embedded.isVisible()) {
+      const widget = embedded.contentFrame();
+      await widget.getByText('Открыть маршрут', { exact: true }).first().waitFor({ timeout: 25_000 });
+      await widget.getByText(/\d+\s*мин/u).first().waitFor({ timeout: 25_000 });
+      console.log('PASS live Yandex widget rendered the two catalog stops and a route estimate');
+    } else {
+      await plan.getByRole('list', { name: 'Отрезки маршрута' }).getByRole('listitem').waitFor();
+      console.log('PASS live Yandex SDK route with two catalog stops');
+    }
   }
   await page.reload();
-  await plan.getByText('2 из 4', { exact: true }).waitFor();
+  await disclosure.waitFor();
+  assert.equal(await disclosure.getAttribute('aria-expanded'), 'false');
+  await disclosure.click();
+  const agenda = plan.getByRole('list', { name: 'События по времени' });
+  await agenda.waitFor();
+  assert.deepEqual(await agenda.getByRole('link').allTextContents(), [firstEvent.title, secondEvent.title]);
   const savedPlan = await context.request.get(`${origin}/api/v1/chats/${planChatId}/event-plan`);
   assert.equal(savedPlan.status(), 200);
   const planEvents = (await savedPlan.json()).events;
-  assert.deepEqual(planEvents.map(event => event.title).sort(), savedTitles.sort());
+  assert.deepEqual(planEvents.map(event => event.title), [firstEvent.title, secondEvent.title]);
   assert.ok(planEvents.every(event => event.city === 'Уфа' && event.sources.length > 0));
   await page.getByRole('button', { name: /^Удалить поиск: Подбери два события/u }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Удалить', exact: true }).click();

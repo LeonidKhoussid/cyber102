@@ -17,6 +17,84 @@ const sample: SourceEvent = {
 
 const planExperience = { planExperience: true };
 
+test('guided day plan asks for each stop and ranks only after the saved event ends', async () => {
+  const catalog = openCatalog(':memory:', clock);
+  try {
+    catalog.importEvents([
+      { ...sample, startsAt: '2026-11-14T10:00:00+05:00', endsAt: '2026-11-14T12:00:00+05:00' },
+      { ...sample, title: 'Выставка до окончания', category: 'exhibition', startsAt: '2026-11-14T11:00:00+05:00', endsAt: '2026-11-14T13:00:00+05:00', sourceKey: 'overlap' },
+      { ...sample, title: 'Выставка без времени на дорогу', venue: 'Галерея', category: 'exhibition', startsAt: '2026-11-14T12:00:00+05:00', endsAt: '2026-11-14T13:00:00+05:00', sourceKey: 'transfer' },
+      { ...sample, title: 'Выставка после обеда', venue: 'Галерея', category: 'exhibition', startsAt: '2026-11-14T13:00:00+05:00', endsAt: '2026-11-14T14:00:00+05:00', sourceKey: 'later' },
+    ]);
+    const discover = createDiscovery(catalog, { clock, recommend: async (_message, _context, candidates) => ({
+      picks: candidates.map(event => ({ id: event.id })),
+    }) });
+    const options = { ...planExperience, guidedPlan: true };
+    const start = await discover('Два события в Стерлитамаке 14 ноября, на машине, с ребёнком 8 лет', undefined, options);
+    assert.equal(start.status, 'clarify');
+    assert.equal(start.events.length, 0);
+    assert.match(start.message, /с чего хотите начать/iu);
+    const offer = await discover('Спектакли', start.context, options);
+    assert.equal(offer.events.length, 1);
+    assert.match(offer.message, /10:00.*12:00/u);
+    const first = offer.events[0].event;
+    assert.equal(offer.context.planStep?.eventId, first.id);
+    const selected = { ...options, selectedEventIds: [first.id] };
+    const next = await discover('Что дальше по плану?', offer.context, selected);
+    assert.equal(next.status, 'clarify');
+    assert.equal(next.events.length, 0);
+    assert.match(next.message, /12:00/u);
+    assert.ok(next.suggestions.includes('Выставки'));
+    assert.equal(next.context.category, undefined);
+    assert.equal(next.context.childAge, 8);
+    const second = await discover('Выставки', next.context, selected);
+    assert.equal(second.events.length, 1);
+    assert.equal(second.events[0].event.title, 'Выставка после обеда');
+    assert.match(second.message, /время в пути/u);
+    const saved = { ...options, selectedEventIds: [first.id, second.events[0].event.id] };
+    const complete = await discover('Что дальше по плану?', second.context, saved);
+    assert.equal(complete.events.length, 0);
+    assert.equal(complete.status, 'matches');
+    assert.match(complete.message, /План готов/u);
+    assert.equal(complete.context.origin, undefined);
+    const ready = await discover('Точка отправления: 53.63, 55.94', complete.context, saved);
+    assert.match(ready.message, /План готов/u);
+    assert.equal(ready.context.origin, '53.63, 55.94');
+    const reset = await discover('Начать с первого события', ready.context, saved);
+    assert.equal(reset.context.origin, undefined);
+    assert.equal(reset.context.query, ready.context.query);
+    assert.match(reset.message, /План готов/u);
+  } finally { catalog.close(); }
+});
+
+test('guided day plan requires an explicit time after a stop with no confirmed end', async () => {
+  const catalog = openCatalog(':memory:', clock);
+  try {
+    catalog.importEvents([
+      { ...sample, startsAt: '2026-11-14T11:00:00+05:00', endsAt: undefined },
+      { ...sample, title: 'Концерт после обеда', category: 'concert', sourceKey: 'concert', startsAt: '2026-11-14T16:00:00+05:00' },
+    ]);
+    const discover = createDiscovery(catalog, { clock });
+    const options = { ...planExperience, guidedPlan: true };
+    const first = await discover('Два спектакля в Стерлитамаке 14 ноября на машине', undefined, options);
+    assert.equal(first.events.length, 1);
+    const selected = { ...options, selectedEventIds: [first.events[0].event.id] };
+    const missing = await discover('Что дальше по плану?', first.context, selected);
+    assert.match(missing.message, /нет подтверждённого времени окончания/u);
+    assert.equal(missing.events.length, 0);
+    const stillMissing = await discover('Концерты', missing.context, selected);
+    assert.equal(stillMissing.events.length, 0);
+    const timeOnly = await discover('14:00', missing.context, selected);
+    assert.equal(timeOnly.events.length, 0);
+    assert.match(timeOnly.message, /14:00.*Что хотите дальше/u);
+    const afterTime = await discover('Концерты', timeOnly.context, selected);
+    assert.equal(afterTime.events[0]?.event.title, 'Концерт после обеда');
+    const confirmed = await discover('После 14:00 хочу концерт', stillMissing.context, selected);
+    assert.equal(confirmed.context.planStep?.resumeAfter, '14:00');
+    assert.equal(confirmed.events[0]?.event.title, 'Концерт после обеда');
+  } finally { catalog.close(); }
+});
+
 test('family day conversation accepts an abbreviated weekday and offers the nearest date in the selected city', async () => {
   const catalog = openCatalog(':memory:', clock);
   try {

@@ -31,6 +31,11 @@ async function selections(client: Pool | PoolClient, chatId: string) {
   return rows;
 }
 
+export async function selectedEventIds(client: PoolClient, chatId: string) {
+  const { rows } = await client.query<{ event_id: string }>('SELECT event_id FROM account_chat_plan_events WHERE chat_id = $1', [chatId]);
+  return rows.map(row => row.event_id);
+}
+
 function isInPlanCityAndDay(event: CatalogEvent, day: string, cityKey: string) {
   return localDate(new Date(event.startsAt)) === day && normalizeText(event.city) === cityKey;
 }

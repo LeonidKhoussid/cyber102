@@ -23,15 +23,10 @@ let api;
 let web;
 let browser;
 
-async function submit(page, question, button = false) {
-  const suggestion = page.getByRole('button', { name: question, exact: true });
-  if (button) await suggestion.waitFor();
+async function discoveryTurn(page, trigger) {
   const responsePromise = page.waitForResponse(response =>
     new URL(response.url()).pathname === '/api/v1/discover' && response.request().method() === 'POST');
-  const trigger = button
-    ? suggestion.click()
-    : page.getByRole('textbox').fill(question).then(() => page.getByRole('textbox').press('Enter'));
-  const [response] = await Promise.all([responsePromise, trigger]);
+  const [response] = await Promise.all([responsePromise, trigger()]);
   assert.equal(response.status(), 200);
   const result = await response.json();
   const turn = page.locator('.turn').last();
@@ -42,6 +37,18 @@ async function submit(page, question, button = false) {
   const events = result.events.map(({ event }) => event);
   assert.ok(events.every(event => event.sources.length > 0 && event.status === 'published'));
   return { result, events, turn };
+}
+
+function submit(page, question, button = false) {
+  return discoveryTurn(page, async () => {
+    if (button) {
+      await page.getByRole('button', { name: question, exact: true }).click();
+    } else {
+      const composer = page.getByRole('textbox');
+      await composer.fill(question);
+      await composer.press('Enter');
+    }
+  });
 }
 
 function hasTitle(events, expected) {
@@ -274,16 +281,19 @@ async function checkVoice(page) {
 }
 
 const planDay = '2027-02-03';
-const planTitles = ['Дневная программа 1', 'Дневная программа 2', 'Дневная программа 3', 'Дневная программа 4', 'Дневная программа 5'];
+const firstStop = 'Утренний спектакль';
+const secondStop = 'Выставка после обеда';
+const earlyExhibition = 'Выставка во время спектакля';
+const planTitles = [firstStop, earlyExhibition, secondStop];
 
 function importPlanEvents() {
+  const slots = [['10:00', '11:55', 'theatre'], ['11:00', '12:00', 'exhibition'], ['12:25', '13:15', 'exhibition']];
   const originals = planTitles.map((title, index) => ({
-    title, startsAt: `${planDay}T${10 + index * 2}:00:00+05:00`, endsAt: `${planDay}T${10 + index * 2}:55:00+05:00`,
-    venue: `Тестовая площадка ${index + 1}`, category: 'other', city: 'Уфа', latitude: 54.72 + index * .01, longitude: 55.94,
+    title, startsAt: `${planDay}T${slots[index][0]}:00+05:00`, endsAt: `${planDay}T${slots[index][1]}:00+05:00`,
+    venue: `Тестовая площадка ${index + 1}`, category: slots[index][2], city: 'Уфа', latitude: 54.72 + index * .01, longitude: 55.94,
     status: 'published', sourceName: 'Controlled planner fixture', sourceKey: `planner-${index}`,
     sourceType: 'import', sourceUrl: 'https://example.org/planner', raw: null,
   }));
-  originals[0].endsAt = `${planDay}T11:59:00+05:00`;
   const report = catalog.importEvents([...originals, { ...originals[0], title: 'Другая дата', sourceKey: 'planner-other-day',
     startsAt: '2027-02-04T10:00:00+05:00', endsAt: '2027-02-04T11:00:00+05:00' }]);
   assert.deepEqual(report.rejected, []);
@@ -320,7 +330,10 @@ async function checkFamilyWeekday(page) {
   const alternative = await submit(page, 'А 14 ноября?', true);
   assert.equal(alternative.result.context.transport, 'car');
   assert.equal(alternative.result.context.date, '2026-11-14');
-  assert.ok(alternative.events.some(event => event.city === 'Салават' && event.title === 'Мастер-класс «Гончарное дело» для детей'));
+  assert.equal(alternative.result.status, 'clarify');
+  assert.equal(alternative.events.length, 0);
+  const offer = await submit(page, '«Гончарное дело»');
+  assert.ok(offer.events.some(event => event.city === 'Салават' && event.title === 'Мастер-класс «Гончарное дело» для детей'));
 }
 
 const mapsFixture = `
@@ -354,54 +367,112 @@ const mapsFixture = `
   };
 `;
 
-async function checkDayPlan(page, withMaps) {
-  await page.route('**/api/v1/maps/config', route => route.fulfill({ json: withMaps ? { yandexApiKey: 'fixture-key' } : {} }));
+async function checkDayPlan(page, mapsMode) {
+  const withMaps = mapsMode === 'sdk';
+  let mapsConfigCalls = 0;
+  let widgetUrl;
+  await page.route('**/api/v1/maps/config', route => {
+    mapsConfigCalls++;
+    return route.fulfill({ json: mapsMode === 'no-key' ? {} : { yandexApiKey: 'fixture-key' } });
+  });
   await page.route('https://api-maps.yandex.ru/2.1/**', route => {
+    if (mapsMode === 'failed-sdk') return route.abort();
     assert.ok(withMaps, 'The SDK should load only with a configured key');
     return route.fulfill({ contentType: 'application/javascript', body: mapsFixture });
   });
-  await submit(page, `Куда сходить в Уфе ${planDay}?`);
-  const plural = await submit(page, 'Несколько событий', true);
+  await page.route(url => url.origin === 'https://yandex.ru' && url.pathname === '/map-widget/v1/', route => {
+    widgetUrl = route.request().url();
+    return route.fulfill({ contentType: 'text/html', body: '<p>Карта маршрута</p>' });
+  });
+  const plural = await submit(page, `Подбери два события в Уфе ${planDay}`);
+  assert.equal(plural.result.context.planCount, 2);
+  assert.equal(plural.events.length, 0);
   assert.match(plural.result.message, /транспорт/u);
   const transport = await submit(page, 'На общественном транспорте', true);
   assert.equal(transport.result.context.transport, 'transit');
-  assert.match(transport.result.message, /откуда/iu);
-  const proposed = await submit(page, '54.701, 55.901');
-  assert.deepEqual(proposed.events.map(event => event.title).sort(), [...planTitles].sort());
-  const card = title => proposed.turn.locator('.event-card').filter({ has: page.getByRole('heading', { level: 3, name: title, exact: true }) });
-  const add = title => card(title).getByRole('button', { name: 'Добавить в план' });
-  const plan = page.getByRole('region', { name: 'План дня', exact: true });
+  assert.equal(transport.result.status, 'clarify');
+  assert.match(transport.result.message, /перв|нача|начн/iu);
+  assert.equal(transport.events.length, 0);
+
+  const plan = page.locator('#event-plan');
+  const disclosure = plan.locator('#event-plan-toggle');
+  const content = plan.locator('#event-plan-content');
+  assert.equal(await disclosure.getAttribute('aria-expanded'), 'false');
+  assert.equal(await disclosure.getAttribute('aria-controls'), 'event-plan-content');
+  assert.match(await content.evaluate(element => getComputedStyle(element).transitionProperty), /grid-template-rows/u);
+  const ordered = plan.getByRole('list', { name: 'События по времени' });
+  const build = plan.getByRole('button', { name: 'Построить маршрут', exact: true });
   const maps = plan.getByRole('region', { name: 'Маршрут в Яндекс Картах' });
 
-  await add(planTitles[1]).click();
+  const first = await submit(page, 'Спектакль');
+  assert.deepEqual(first.events.map(event => event.title), [firstStop]);
+  assert.equal(Date.parse(first.events[0].endsAt), Date.parse(`${planDay}T11:55:00+05:00`));
+  const nextQuestion = await discoveryTurn(page, () => first.turn.getByRole('button', { name: 'Добавить в план' }).click());
+  assert.equal(nextQuestion.result.status, 'clarify');
+  assert.equal(nextQuestion.events.length, 0);
+  assert.match(nextQuestion.result.message, /11:55/u);
+  assert.match(nextQuestion.result.message, /\?/u);
+  const next = await submit(page, 'Выставка');
+  assert.deepEqual(next.events.map(event => event.title), [secondStop]);
+  assert.ok(Date.parse(next.events[0].startsAt) >= Date.parse(first.events[0].endsAt));
+  const saved = await discoveryTurn(page, () => next.turn.getByRole('button', { name: 'Добавить в план' }).click());
+  assert.equal(saved.events.length, 0);
+  assert.equal(saved.result.context.origin, undefined);
+  assert.match(saved.result.message, /План готов/u);
+  assert.equal(await disclosure.getAttribute('aria-expanded'), 'false');
+  assert.equal(await ordered.isVisible(), false);
+  await disclosure.press('Enter');
+  await ordered.waitFor();
+  assert.equal(await disclosure.getAttribute('aria-expanded'), 'true');
+  assert.deepEqual(await ordered.getByRole('link').allTextContents(), [firstStop, secondStop]);
   assert.equal(await maps.count(), 0);
-  await add(planTitles[0]).click();
-  const ordered = plan.getByRole('list', { name: 'События по времени' });
-  assert.deepEqual(await ordered.getByRole('link').allTextContents(), planTitles.slice(0, 2));
+  assert.equal(mapsConfigCalls, 0);
+
+  await build.click();
   const link = maps.getByRole('link', { name: 'Открыть в Яндекс Картах' });
   await link.waitFor();
   const route = new URL(await link.getAttribute('href'));
+  assert.equal(await link.getAttribute('target'), '_blank');
   assert.equal(route.hostname, 'yandex.ru');
   assert.equal(route.searchParams.get('rtt'), 'mt');
-  assert.equal(route.searchParams.get('rtext').split('~').length, 3);
+  const points = [first.events[0], next.events[0]].map(event => [event.latitude, event.longitude]);
+  assert.deepEqual(route.searchParams.get('rtext').split('~').map(point => point.split(',').map(Number)), points);
   if (withMaps) {
-    await maps.getByText(/в пути около 16 мин/iu).waitFor();
-    assert.equal(await plan.getByRole('list', { name: 'Отрезки маршрута' }).getByRole('listitem').count(), 2);
-    await plan.getByText(/Не хватает времени на дорогу/u).waitFor();
+    await maps.getByText(/в пути около 8 мин/iu).waitFor();
+    assert.equal(widgetUrl, undefined);
+    assert.equal(await plan.getByRole('list', { name: 'Отрезки маршрута' }).getByRole('listitem').count(), 1);
     const request = await page.evaluate(() => window.testRouteRequests.at(-1));
     assert.equal(request.params.routingMode, 'masstransit');
-    assert.deepEqual(request.referencePoints, [[54.701, 55.901], ...proposed.events.filter(event => planTitles.slice(0, 2).includes(event.title))
-      .sort((first, second) => first.startsAt.localeCompare(second.startsAt)).map(event => [event.latitude, event.longitude])]);
+    assert.deepEqual(request.referencePoints, points);
   } else {
-    await maps.getByText(/время в пути.*в яндекс картах/iu).waitFor();
+    const frame = maps.locator('iframe[title="Интерактивная карта маршрута"]');
+    await frame.waitFor();
+    const widget = new URL(await frame.getAttribute('src'));
+    assert.equal(widget.hostname, 'yandex.ru');
+    assert.equal(widget.pathname, '/map-widget/v1/');
+    assert.equal(widget.search, route.search);
+    assert.equal(widgetUrl, widget.href);
     assert.equal(await plan.getByRole('list', { name: 'Отрезки маршрута' }).count(), 0);
   }
-  await add(planTitles[2]).click();
-  await add(planTitles[3]).click();
-  assert.equal(await add(planTitles[4]).isDisabled(), true);
-  await plan.getByText('4 из 4', { exact: true }).waitFor();
-  await plan.getByRole('button', { name: `Убрать из плана: ${planTitles[1]}` }).click();
-  assert.equal(await add(planTitles[4]).isEnabled(), true);
+  await disclosure.click();
+  assert.equal(await disclosure.getAttribute('aria-expanded'), 'false');
+  await page.locator('.turn').last().getByRole('button', { name: /^План дня/u }).click();
+  assert.equal(await disclosure.getAttribute('aria-expanded'), 'true');
+  assert.equal(await disclosure.evaluate(element => document.activeElement === element), true);
+  if (withMaps) {
+    const custom = await submit(page, 'Точка отправления: 54.701, 55.901');
+    assert.equal(custom.result.context.origin, '54.701, 55.901');
+    await build.click();
+    await maps.getByText(/в пути около 16 мин/iu).waitFor();
+    const request = await page.evaluate(() => window.testRouteRequests.at(-1));
+    assert.deepEqual(request.referencePoints, [[54.701, 55.901], ...points]);
+    const reset = await discoveryTurn(page, () => plan.getByRole('button', { name: 'Начать с первого события' }).click());
+    assert.equal(reset.result.context.origin, undefined);
+    await maps.waitFor({ state: 'hidden' });
+  }
+  await plan.getByRole('button', { name: `Убрать из плана: ${secondStop}` }).click();
+  await maps.waitFor({ state: 'hidden' });
+  assert.equal(await plan.getByRole('button', { name: `Убрать из плана: ${secondStop}` }).count(), 0);
 }
 
 async function runCase(name, run, origin, planning = false) {
@@ -413,7 +484,7 @@ async function runCase(name, run, origin, planning = false) {
   try {
     // Exercise the established search rules independently of the new onboarding turns.
     if (!planning) await page.route('**/api/v1/discover', route => route.continue({
-      postData: JSON.stringify({ ...route.request().postDataJSON(), planExperience: false }),
+      postData: JSON.stringify({ ...route.request().postDataJSON(), planExperience: false, guidedPlan: false }),
     }));
     await page.goto(origin);
     await run(page);
@@ -469,11 +540,13 @@ try {
   const plannerOrigin = await startFixture();
   const planner = await runCase('planner asks for city and returns one event when selected', checkSingleChoice, plannerOrigin, true);
   const familyWeekday = await runCase('family plan accepts an abbreviated weekday and follows the verified nearby date', checkFamilyWeekday, plannerOrigin, true);
-  const mapped = await runCase('planner saves and orders stops, warns about transfers, and enforces four-event limit (Yandex SDK stub)',
-    page => checkDayPlan(page, true), plannerOrigin, true);
-  const noKey = await runCase('planner offers a maps link without estimating time when no key is configured',
-    page => checkDayPlan(page, false), plannerOrigin, true);
-  process.exitCode = passes === cases.length && voice && planner && familyWeekday && mapped && noKey ? 0 : 1;
+  const mapped = await runCase('guided planner asks at each stop, opens on demand, and only builds the two-stop route when requested (Yandex SDK stub)',
+    page => checkDayPlan(page, 'sdk'), plannerOrigin, true);
+  const noKey = await runCase('planner embeds the Yandex widget when no key is configured',
+    page => checkDayPlan(page, 'no-key'), plannerOrigin, true);
+  const rejectedKey = await runCase('planner embeds the same route when the Yandex SDK fails',
+    page => checkDayPlan(page, 'failed-sdk'), plannerOrigin, true);
+  process.exitCode = passes === cases.length && voice && planner && familyWeekday && mapped && noKey && rejectedKey ? 0 : 1;
 } finally {
   await browser?.close();
   await web?.close();

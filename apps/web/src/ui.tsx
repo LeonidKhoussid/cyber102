@@ -12,6 +12,7 @@ const glyphs = {
   stop: "M7 7h10v10H7z",
   diagonal: "M6 18 18 6M7 6h11v11",
   left: "M20 12H4m6-6-6 6 6 6",
+  chevron: "m6 9 6 6 6-6",
   plus: "M12 5v14M5 12h14",
   grid: "M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm11 0h7v7h-7z",
   calendar: "M4 6h16v15H4zM4 10h16M8 3v5m8-5v5",

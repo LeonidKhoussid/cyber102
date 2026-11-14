@@ -6,7 +6,7 @@ export type BotService = {
   search: (filters: QueryValues) => Promise<EventPage>;
   event: (id: string) => Promise<CatalogEvent | undefined>;
   directories: () => Promise<Directories>;
-  discover: (message: string, context?: DiscoveryContext) => Promise<DiscoveryResponse>;
+  discover: (message: string, context?: DiscoveryContext, selectedEventIds?: string[]) => Promise<DiscoveryResponse>;
   subscribe: (subscriber: string, subscription: Subscription) => Promise<void>;
   unsubscribe: (subscriber: string) => Promise<number>;
 };
@@ -72,8 +72,8 @@ export function createBotService(origin: string, token: string, fetcher: typeof 
     async directories() {
       return json(await request('/api/v1/directories'));
     },
-    async discover(message, context) {
-      return json(await request('/api/v1/discover', send('POST', { message, context, planExperience: true })));
+    async discover(message, context, selectedEventIds) {
+      return json(await request('/api/v1/discover', send('POST', { message, context, planExperience: true, guidedPlan: true, selectedEventIds })));
     },
     async subscribe(subscriber, subscription) {
       const response = await request(subscriptions, send('PUT', { subscriber, ...subscription }, true));

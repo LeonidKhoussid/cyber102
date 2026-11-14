@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Bot, InlineKeyboard } from 'grammy';
 import type { Context } from 'grammy';
-import { categories } from '@afisha/contracts';
+import { categories, dayPlanLimit } from '@afisha/contracts';
 import type { CatalogEvent, Category, DiscoveryContext, DiscoveryResponse, QueryValues } from '@afisha/contracts';
 import { BotServiceError } from './client.ts';
 import type { BotService } from './client.ts';
@@ -15,9 +15,11 @@ type BotOptions = {
 };
 
 type Action = (context: Context) => Promise<void>;
+type DayPlan = { city: string; date: string; eventIds: string[] };
 type Session = {
   filters: QueryValues & { category?: Category; period?: keyof typeof periods };
   discovery?: DiscoveryContext;
+  dayPlan?: DayPlan;
   page: number;
   enteringDate: boolean;
   buttons: Map<string, Action>;
@@ -39,10 +41,11 @@ const periods = {
   nextWeek: 'Следующая неделя',
 } as const;
 const prices = [['0', 'Бесплатно'], ['500', 'До 500 ₽'], ['1000', 'До 1 000 ₽'], ['2000', 'До 2 000 ₽']] as const;
-const help = 'Напишите, какое событие ищете, например «Концерт в Уфе на двоих до 2000 ₽». Уточняйте поиск следующими сообщениями. В каталоге можно выбрать город, категорию, даты и цену кнопками. Для точной даты введите ГГГГ-ММ-ДД. /cancel отменяет ввод даты. /unsubscribe удаляет все подписки.';
+const help = 'Напишите, какое событие ищете, например «Концерт в Уфе на двоих до 2000 ₽». Для плана на день добавляйте предложенные события по одному. /start начинает новый поиск. В каталоге можно выбрать город, категорию, даты и цену кнопками. Для точной даты введите ГГГГ-ММ-ДД. /cancel отменяет ввод даты. /unsubscribe удаляет все подписки.';
 const localDate = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Yekaterinburg' });
 const dateFormatter = new Intl.DateTimeFormat('ru-RU', { timeZone: 'Asia/Yekaterinburg', dateStyle: 'medium', timeStyle: 'short' });
 const money = new Intl.NumberFormat('ru-RU', { style: 'currency', currency: 'RUB', maximumFractionDigits: 2, minimumFractionDigits: 0 });
+const nextPlanStep = 'Что дальше по плану?';
 
 function publicUrl(value?: string): string | undefined {
   if (!value || value.length > 2000) return;
@@ -264,27 +267,42 @@ export function createTelegramBot({ token, service, siteUrl, onError, clock = ()
     const constraints = result.constraints.map(({ label, value }) => `${label}: ${value}`).join(' · ');
     if (constraints) lines.push(shorten(constraints, 400));
     const cards = result.events.length ? result.events : result.alternatives ?? [];
+    const { city, date, planMode, planStep } = result.context;
+    const plan = session.dayPlan;
     for (const { event, reasons } of cards.slice(0, pageSize)) {
       screen.button(event.title, next => showDetails(next, session, event.id, back => showDiscovery(back, session, result)));
       screen.keyboard.row();
       const summary = `${shorten(event.title, 120)} — ${dateFormatter.format(new Date(event.startsAt))}, ${shorten(event.city, 80)}`;
       lines.push([summary, shorten(reasons.join(' · '), 320)].filter(Boolean).join('\n'));
+      if (planMode === 'day' && planStep?.phase === 'offer' && planStep.eventId === event.id && event.status === 'published' && city === event.city && date) {
+        if (plan && plan.eventIds.length > 0 && (plan.city !== city || plan.date !== date)) {
+          lines.push('В плане уже есть события другого дня или города. Чтобы начать заново, отправьте /start.');
+        } else if (!plan?.eventIds.includes(event.id) && (plan?.eventIds.length ?? 0) < dayPlanLimit) {
+          screen.button('Добавить в план', next => discover(next, session, nextPlanStep, { city, date, eventIds: [...(plan?.eventIds ?? []), event.id] }));
+          screen.keyboard.row();
+        }
+      }
     }
-    for (const suggestion of result.suggestions.slice(0, 3)) {
+    for (const suggestion of result.suggestions.slice(0, planMode === 'day' ? 7 : 3)) {
       screen.button(suggestion, next => discover(next, session, suggestion));
+      screen.keyboard.row();
+    }
+    if (plan?.eventIds.length && planMode === 'day') {
+      screen.button('Убрать последнее событие', next => discover(next, session, nextPlanStep, { ...plan, eventIds: plan.eventIds.slice(0, -1) }));
       screen.keyboard.row();
     }
     screen.button('Открыть каталог', next => showResults(next, session));
     await screen.send(context, lines.join('\n\n'));
   }
 
-  async function discover(context: Context, session: Session, text: string) {
+  async function discover(context: Context, session: Session, text: string, plan = session.dayPlan) {
     if (!text || text.length > 1200) {
       await context.reply('Опишите событие в сообщении до 1200 символов.');
       return;
     }
-    const result = await service.discover(text, session.discovery);
+    const result = await service.discover(text, session.discovery, plan?.eventIds);
     session.discovery = result.context;
+    session.dayPlan = plan?.eventIds.length ? plan : undefined;
     await showDiscovery(context, session, result);
   }
 
@@ -334,6 +352,7 @@ export function createTelegramBot({ token, service, siteUrl, onError, clock = ()
     const session = sessions.get(context.chat.id)!;
     session.enteringDate = false;
     session.discovery = undefined;
+    session.dayPlan = undefined;
     const screen = menu(session);
     screen.button('Найти события', next => showResults(next, session));
     screen.keyboard.row();

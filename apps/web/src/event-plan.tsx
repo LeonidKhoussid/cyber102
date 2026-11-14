@@ -67,11 +67,10 @@ export function useEventPlan(accountId?: string, chatId?: string) {
   async function toggle(event: CatalogEvent, date: string, remove: boolean) {
     const select = (events: CatalogEvent[]) => remove ? events.filter(item => item.id !== event.id) : [...events, event];
     if (!accountId) {
-      setGuestEvents(previous => {
-        if (!remove && (previous.some(saved => saved.id === event.id) || planRejection(previous, event, date))) return previous;
-        return select(previous);
-      });
-      return;
+      if (!remove && (guestEvents.some(saved => saved.id === event.id) || planRejection(guestEvents, event, date))) return;
+      const events = select(guestEvents);
+      setGuestEvents(events);
+      return events;
     }
     if (!key || !endpoint || selected.loading || selected.loadError || writes.current.has(key)) return;
     const path = `${endpoint}/${encodeURIComponent(event.id)}`;
@@ -81,6 +80,7 @@ export function useEventPlan(accountId?: string, chatId?: string) {
     try {
       const { events } = await operation;
       setAccountPlan(previous => previous.key === key && !previous.loading ? { key, events } : previous);
+      return events;
     } catch (error) {
       setAccountPlan(previous => previous.key === key && !previous.loading ? {
         ...previous, saving: false, writeError: errorText(error, 'Не удалось изменить план дня.'),
@@ -134,26 +134,33 @@ function startLocation(origin: string, city: string, knownLocations: CatalogEven
 }
 
 function Journey({ events, origin, originLocation, transport, travelMinutes }: {
-  events: CatalogEvent[]; origin: string; originLocation: RouteLocation;
+  events: CatalogEvent[]; origin?: string; originLocation?: RouteLocation;
   transport: NonNullable<DiscoveryContext['transport']>; travelMinutes?: number;
 }) {
   const { data, error, retry } = useData<{ yandexApiKey?: string }>('/api/v1/maps/config');
+  const heading = useRef<HTMLHeadingElement>(null);
   const [route, setRoute] = useState<RouteResult | null>(null);
-  const transfers = route?.legs.length === events.length ? route.legs : undefined;
-  const departure = transfers && new Date(Date.parse(events[0].startsAt) - transfers[0].durationSeconds * 1000);
+  const stops = originLocation ? events : events.slice(1);
+  const start = originLocation ?? eventLocation(events[0]);
+  const transfers = route?.legs.length === stops.length ? route.legs : undefined;
+  const departure = originLocation && transfers && new Date(Date.parse(events[0].startsAt) - transfers[0].durationSeconds * 1000);
+  useEffect(() => {
+    heading.current?.focus({ preventScroll: true });
+    heading.current?.scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth' });
+  }, []);
 
   return <section className="plan-route" aria-labelledby="plan-route-heading">
-    <h3 id="plan-route-heading">Маршрут</h3>
-    <p className="plan-meta plan-context">{transportOptions[transport]} · Откуда: {origin}</p>
+    <h3 id="plan-route-heading" ref={heading} tabIndex={-1}>Маршрут</h3>
+    <p className="plan-meta plan-context">{transportOptions[transport]} · Откуда: {origin ?? events[0].venue}</p>
     {error && <Notice text="Не удалось загрузить настройки карты." retry={retry} />}
     {data || error ?
-      <YandexRoute apiKey={data?.yandexApiKey ?? null} mode={transport} origin={originLocation}
-        stops={events.map(eventLocation)} onResult={setRoute} /> :
+      <YandexRoute apiKey={data?.yandexApiKey ?? null} mode={transport} origin={start}
+        stops={stops.map(eventLocation)} onResult={setRoute} /> :
       <p className="loading" role="status"><span className="spinner" />Загружаем карту…</p>}
     {departure && <p className="plan-meta">Отправление к первому событию — ориентировочно не позже <time dateTime={departure.toISOString()}>{departureLabel.format(departure)}</time>.</p>}
     {!transfers && travelMinutes !== undefined && <p className="plan-warning">Условие «не больше {travelMinutes} мин на дорогу» пока не проверено.</p>}
-    {transfers && <ol aria-label="Отрезки маршрута" className="plan-transfers">{events.map((event, index) => {
-      const previous = events[index - 1];
+    {transfers && <ol aria-label="Отрезки маршрута" className="plan-transfers">{stops.map((event, index) => {
+      const previous = events[originLocation ? index - 1 : index];
       const ride = transfers[index].durationSeconds;
       const gapSeconds = previous?.endsAt && (Date.parse(event.startsAt) - Date.parse(previous.endsAt)) / 1000;
       const tooShort = typeof gapSeconds === 'number' && gapSeconds >= 0 && ride > gapSeconds;
@@ -167,69 +174,93 @@ function Journey({ events, origin, originLocation, transport, travelMinutes }: {
   </section>;
 }
 
-export function EventPlan({ plan, context, waiting, differentPlan, canEditRoute, knownLocations, onRemove, onOrigin, onTransport }: {
+function BuildJourney({ events, origin, originLocation, transport, travelMinutes, waiting }: {
+  events: CatalogEvent[]; origin?: string; originLocation?: RouteLocation;
+  transport?: DiscoveryContext['transport']; travelMinutes?: number; waiting: boolean;
+}) {
+  const [attempt, setAttempt] = useState(0);
+  return <>
+    <button type="button" className="primary plan-build" disabled={waiting || !transport} onClick={() => setAttempt(previous => previous + 1)}>
+      <Icon name="pin" />{attempt ? 'Перестроить маршрут' : 'Построить маршрут'}
+    </button>
+    {attempt > 0 && transport && <Journey key={attempt} events={events}
+      origin={origin} originLocation={originLocation} transport={transport} travelMinutes={travelMinutes} />}
+  </>;
+}
+
+export function EventPlan({ plan, context, open, onToggle, waiting, differentPlan, canEditRoute, knownLocations, onRemove, onOrigin, onResetOrigin, onTransport }: {
   plan: ReturnType<typeof useEventPlan>; context?: DiscoveryContext; waiting: boolean; differentPlan: boolean;
+  open: boolean; onToggle: () => void;
   canEditRoute: boolean; knownLocations: CatalogEvent[];
-  onRemove: (event: CatalogEvent) => void; onOrigin: () => void; onTransport: (text: string) => void;
+  onRemove: (event: CatalogEvent) => void; onOrigin: () => void; onResetOrigin: () => void; onTransport: (text: string) => void;
 }) {
   const [editTransport, setEditTransport] = useState(false);
   const events = [...plan.events].sort((first, second) => Date.parse(first.startsAt) - Date.parse(second.startsAt));
   const first = events[0];
   const date = first ? eventLocalDay(first) : context?.date;
   const city = first?.city ?? context?.city;
-  const target = context?.planCount ?? 2;
-  const enough = events.length >= target;
+  const enough = events.length >= 2;
   const eligible = events.every(event => event.status === 'published');
   const origin = context?.origin;
   const transport = context?.transport;
   const blocked = waiting || plan.saving;
   const originLocation = origin && city ? startLocation(origin, city, [...events, ...knownLocations]) : undefined;
 
-  return <section id="event-plan" className="event-plan" aria-labelledby="event-plan-heading" tabIndex={-1}>
+  return <section id="event-plan" className="event-plan" aria-labelledby="event-plan-heading" data-open={open}>
     <header className="plan-heading">
-      <h2 id="event-plan-heading"><Icon name="calendar" />План дня</h2>
+      <h2 id="event-plan-heading">
+        <button id="event-plan-toggle" type="button" aria-expanded={open} aria-controls="event-plan-content" onClick={onToggle}>
+          <Icon name="calendar" /><span>План дня</span>
+          <span className="plan-chevron"><Icon name="chevron" /></span>
+        </button>
+      </h2>
       <span className="plan-count" aria-live="polite">{events.length} из {dayPlanLimit}</span>
     </header>
-    {(city || date) && <p className="plan-meta plan-context">{[city, date && dayLabel.format(new Date(`${date}T12:00:00+05:00`))].filter(Boolean).join(' · ')}</p>}
-    {plan.loading && <p className="loading" role="status"><span className="spinner" />Загружаем план дня…</p>}
-    {plan.loadError && <Notice text={plan.loadError} retry={plan.retry} />}
-    {plan.writeError && <Notice text={plan.writeError} />}
-    {differentPlan && <p className="plan-warning">Чтобы собрать план на другой день или в другом городе, сначала уберите сохранённые события.</p>}
-    {events.length > 0 ? <ol className="plan-agenda" aria-label="События по времени">{events.map((event, index) => {
-      const start = Date.parse(event.startsAt);
-      const end = event.endsAt ? Date.parse(event.endsAt) : start;
-      const overlap = events.some((other, otherIndex) => {
-        if (otherIndex === index) return false;
-        const otherStart = Date.parse(other.startsAt);
-        const otherEnd = other.endsAt ? Date.parse(other.endsAt) : otherStart;
-        return start === otherStart || (start < otherEnd && otherStart < end);
-      });
-      return <li key={event.id}>
-        <div className="plan-event-details">
-          <a className="plan-event-title" href={`/events/${encodeURIComponent(event.id)}`}>{event.title}</a>
-          <p className="plan-event-time"><EventTime event={event} /></p>
-          <p className="plan-meta">{event.venue}{event.address && ` · ${event.address}`}</p>
-          {event.status !== 'published' && <p className="plan-warning">Событие недоступно. Уберите его, чтобы построить маршрут.</p>}
-          {!event.endsAt && <p className="plan-warning">Время окончания не указано.</p>}
-          {overlap && <p className="plan-warning">Пересекается по времени с другим событием.</p>}
-        </div>
-        <button type="button" className="prompt-chip" aria-label={`Убрать из плана: ${event.title}`} disabled={blocked} onClick={() => onRemove(event)}><Icon name="close" />Убрать</button>
-      </li>;
-    })}</ol> : !plan.loading && !plan.loadError && <p className="plan-meta">Добавьте события из подборки.</p>}
-    {first && !enough && <p className="plan-meta">{target - events.length === 1 ? 'Добавьте ещё одно событие для маршрута.' : `Для маршрута добавьте ещё ${target - events.length} события.`}</p>}
-    {first && enough && eligible && <div className="plan-setup">
-      {!origin && <p className="plan-meta">Откуда начнётся маршрут?</p>}
-      {canEditRoute && (!transport || editTransport) && <div>
-        <p className="plan-meta">Как будете добираться?</p>
-        <div className="suggestions">{Object.values(transportOptions).map(label => <button type="button" key={label} className="prompt-chip" disabled={blocked}
-          onClick={() => { setEditTransport(false); onTransport(label); }}>{label}</button>)}</div>
-      </div>}
-      {canEditRoute && <div className="plan-tools">
-        <button type="button" className="prompt-chip" disabled={blocked} onClick={onOrigin}><Icon name="pin" />{origin ? 'Изменить отправление' : 'Указать отправление'}</button>
-        {transport && !editTransport && <button type="button" className="prompt-chip" disabled={blocked} onClick={() => setEditTransport(true)}>Изменить транспорт</button>}
-      </div>}
-      {origin && originLocation && transport && <Journey key={JSON.stringify([originLocation, transport, events])} events={events}
-        origin={origin} originLocation={originLocation} transport={transport} travelMinutes={context?.travelMinutes} />}
-    </div>}
+    <div id="event-plan-content" className="plan-disclosure" inert={!open} aria-hidden={!open}>
+      <div className="plan-clip"><div className="plan-content">
+        {(city || date) && <p className="plan-meta plan-context">{[city, date && dayLabel.format(new Date(`${date}T12:00:00+05:00`))].filter(Boolean).join(' · ')}</p>}
+        {plan.loading && <p className="loading" role="status"><span className="spinner" />Загружаем план дня…</p>}
+        {plan.loadError && <Notice text={plan.loadError} retry={plan.retry} />}
+        {plan.writeError && <Notice text={plan.writeError} />}
+        {differentPlan && <p className="plan-warning">Чтобы собрать план на другой день или в другом городе, сначала уберите сохранённые события.</p>}
+        {events.length > 0 ? <ol className="plan-agenda" aria-label="События по времени">{events.map((event, index) => {
+          const start = Date.parse(event.startsAt);
+          const end = event.endsAt ? Date.parse(event.endsAt) : start;
+          const overlap = events.some((other, otherIndex) => {
+            if (otherIndex === index) return false;
+            const otherStart = Date.parse(other.startsAt);
+            const otherEnd = other.endsAt ? Date.parse(other.endsAt) : otherStart;
+            return start === otherStart || (start < otherEnd && otherStart < end);
+          });
+          return <li key={event.id}>
+            <div className="plan-event-details">
+              <a className="plan-event-title" href={`/events/${encodeURIComponent(event.id)}`}>{event.title}</a>
+              <p className="plan-event-time"><EventTime event={event} /></p>
+              <p className="plan-meta">{event.venue}{event.address && ` · ${event.address}`}</p>
+              {event.status !== 'published' && <p className="plan-warning">Событие недоступно. Уберите его, чтобы построить маршрут.</p>}
+              {!event.endsAt && <p className="plan-warning">Время окончания не указано.</p>}
+              {overlap && <p className="plan-warning">Пересекается по времени с другим событием.</p>}
+            </div>
+            <button type="button" className="prompt-chip" aria-label={`Убрать из плана: ${event.title}`} disabled={blocked} onClick={() => onRemove(event)}><Icon name="close" />Убрать</button>
+          </li>;
+        })}</ol> : !plan.loading && !plan.loadError && <p className="plan-meta">Добавьте события из подборки.</p>}
+        {first && !enough && <p className="plan-meta">Добавьте ещё одно событие для маршрута.</p>}
+        {first && enough && eligible && <div className="plan-setup">
+          {!origin && <p className="plan-meta">Маршрут начнётся с первого события.</p>}
+          {canEditRoute && (!transport || editTransport) && <div>
+            <p className="plan-meta">Как будете добираться?</p>
+            <div className="suggestions">{Object.values(transportOptions).map(label => <button type="button" key={label} className="prompt-chip" disabled={blocked}
+              onClick={() => { setEditTransport(false); onTransport(label); }}>{label}</button>)}</div>
+          </div>}
+          {canEditRoute && <div className="plan-tools">
+            <button type="button" className="prompt-chip" disabled={blocked} onClick={onOrigin}><Icon name="pin" />{origin ? 'Изменить точку отправления' : 'Добавить точку отправления'}</button>
+            {origin && <button type="button" className="prompt-chip" disabled={blocked} onClick={onResetOrigin}>Начать с первого события</button>}
+            {transport && !editTransport && <button type="button" className="prompt-chip" disabled={blocked} onClick={() => setEditTransport(true)}>Изменить транспорт</button>}
+          </div>}
+          <BuildJourney key={JSON.stringify([originLocation, transport, events])} events={events}
+            origin={origin} originLocation={originLocation} transport={transport} travelMinutes={context?.travelMinutes} waiting={Boolean(blocked)} />
+        </div>}
+      </div></div>
+    </div>
   </section>;
 }

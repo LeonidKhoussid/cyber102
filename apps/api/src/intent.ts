@@ -97,6 +97,12 @@ export function cleanContext(input: unknown): DiscoveryContext {
   if (values.planMode === 'single' || values.planMode === 'day') result.planMode = values.planMode;
   if (result.planMode === 'day' && typeof values.planCount === 'number' && Number.isInteger(values.planCount) &&
       values.planCount >= 2 && values.planCount <= dayPlanLimit) result.planCount = values.planCount;
+  const step = values.planStep as Record<string, unknown> | undefined;
+  if (result.planMode === 'day' && (step?.phase === 'question' || step?.phase === 'offer')) {
+    const optionalId = (value: unknown) => typeof value === 'string' && /^[0-9a-f-]{36}$/iu.test(value) ? value : undefined;
+    result.planStep = { phase: step.phase, anchor: optionalId(step.anchor), eventId: optionalId(step.eventId),
+      resumeAfter: typeof step.resumeAfter === 'string' && validTime.test(step.resumeAfter) ? step.resumeAfter : undefined };
+  }
   if (values.transport === 'car' || values.transport === 'transit' || values.transport === 'walk' ||
       values.transport === 'bike' || values.transport === 'taxi') result.transport = values.transport;
   for (const field of ['latestEnd', 'earliestStart'] as const) {

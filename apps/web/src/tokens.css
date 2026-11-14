@@ -30,8 +30,9 @@
   --color-surface: #171a28;
   --color-raised: #1f2235;
   --color-question: #232741;
-  --color-border: #303449;
-  --color-border-strong: #4e5371;
+  --color-border: transparent;
+  --color-border-strong: transparent;
+  --color-focus: #bdbdbd;
   --color-text: #f1f0fa;
   --color-muted: #b1b3c9;
   --color-quiet: #9295af;
@@ -69,8 +70,9 @@
   --color-surface: #fdfcff;
   --color-raised: #eeedf8;
   --color-question: #e6e4f7;
-  --color-border: #d8d7e7;
-  --color-border-strong: #8887a2;
+  --color-border: transparent;
+  --color-border-strong: transparent;
+  --color-focus: #595959;
   --color-text: #212237;
   --color-muted: #4a4d68;
   --color-quiet: #585b76;

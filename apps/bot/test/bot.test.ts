@@ -4,6 +4,8 @@ import type { InlineKeyboardButton, Update } from 'grammy/types';
 import { createTelegramBot } from '../src/bot.ts';
 import type { CatalogEvent, DiscoveryResponse } from '@afisha/contracts';
 import { createBotService } from '../src/client.ts';
+import { openCatalog } from '../../api/src/catalog.ts';
+import { buildServer } from '../../api/src/server.ts';
 
 const fixedDate = new Date('2026-11-13T10:00:00+05:00');
 const botUser = { id: 99, is_bot: true, first_name: 'Афиша', username: 'afisha_test_bot', can_join_groups: false,
@@ -81,7 +83,7 @@ function api(events: CatalogEvent[] = []) {
   return { service, requests, subscriptions, discover: (handler: typeof discover) => { discover = handler; } };
 }
 
-function harness({ service }: ReturnType<typeof api>, siteUrl?: string) {
+function harness({ service }: Pick<ReturnType<typeof api>, 'service'>, siteUrl?: string) {
   let time = fixedDate.valueOf();
   let errors = 0;
   const bot = createTelegramBot({ token: 'offline', service, siteUrl, clock: () => new Date(time), onError: () => { errors++; } });
@@ -284,7 +286,7 @@ test('sends free text and follow-ups to discovery and opens a matched card', asy
   backend.discover(() => response);
   const telegram = harness(backend);
   await telegram.message('Концерт на троих в Уфе до 2000 рублей');
-  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Концерт на троих в Уфе до 2000 рублей', planExperience: true });
+  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Концерт на троих в Уфе до 2000 рублей', planExperience: true, guidedPlan: true });
   assert.equal(backend.requests.at(-1)?.authorization, null);
   assert.match(telegram.latest().text, /Бюджет: 2000 ₽/);
   assert.match(telegram.latest().text, /Подходит по бюджету/);
@@ -296,12 +298,102 @@ test('sends free text and follow-ups to discovery and opens a matched card', asy
 
   backend.discover(() => ({ ...response, status: 'no_results', message: 'Дешевле событий нет.', events: [], suggestions: [] }));
   await telegram.click('Подешевле');
-  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Подешевле', context: response.context, planExperience: true });
+  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Подешевле', context: response.context, planExperience: true, guidedPlan: true });
   assert.match(telegram.latest().text, /Дешевле событий нет/);
   await telegram.message('2026-11-23');
-  assert.deepEqual(backend.requests.at(-1)?.body, { message: '2026-11-23', context: response.context, planExperience: true });
+  assert.deepEqual(backend.requests.at(-1)?.body, { message: '2026-11-23', context: response.context, planExperience: true, guidedPlan: true });
   await telegram.message('Что сегодня?', 2);
-  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Что сегодня?', planExperience: true });
+  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Что сегодня?', planExperience: true, guidedPlan: true });
+});
+
+test('accepts the active day-plan offer, advances the shared conversation, and rejects stale offer buttons', async () => {
+  const concert = event('Утренний концерт', '2026-11-14T10:00:00+05:00', {
+    id: '00000000-0000-4000-8000-000000000001', endsAt: '2026-11-14T11:00:00+05:00',
+  });
+  const backend = api([concert]);
+  const context: DiscoveryResponse['context'] = { city: 'Уфа', date: '2026-11-14', planMode: 'day' };
+  const offer: DiscoveryResponse = {
+    status: 'matches', message: 'Утренний концерт в 10:00. Добавим в план?', constraints: [],
+    events: [{ event: concert, reasons: [] }], suggestions: [], context: { ...context, planStep: { phase: 'offer', eventId: concert.id } },
+  };
+  const nextQuestion: DiscoveryResponse = {
+    status: 'clarify', message: 'Концерт закончится в 11:00. Что хотите после него?', constraints: [],
+    events: [], suggestions: [], context: { ...context, planStep: { phase: 'question', anchor: concert.id } },
+  };
+  backend.discover(() => offer);
+  const telegram = harness(backend);
+  await telegram.message('Хочу начать день с концерта');
+  const expiredSave = telegram.data('Добавить в план');
+  await telegram.click('Утренний концерт');
+  await telegram.click('К результатам');
+  await telegram.callback(expiredSave);
+  assert.equal(backend.requests.length, 2);
+
+  const activeSave = telegram.data('Добавить в план');
+  backend.discover(() => new Response(null, { status: 503 }));
+  await telegram.callback(activeSave);
+  assert.match(telegram.latest().text, /временно недоступна/);
+  const retriableSave = backend.requests.at(-1)?.body;
+  assert.deepEqual(retriableSave, {
+    message: 'Что дальше по плану?', context: offer.context, planExperience: true, guidedPlan: true, selectedEventIds: [concert.id],
+  });
+  backend.discover(() => nextQuestion);
+  await telegram.callback(activeSave);
+  assert.deepEqual(backend.requests.at(-1)?.body, retriableSave);
+  assert.match(telegram.latest().text, /в 11:00/);
+  const requests = backend.requests.length;
+  await telegram.callback(activeSave);
+  assert.equal(backend.requests.length, requests);
+
+  backend.discover(() => offer);
+  await telegram.click('Убрать последнее событие');
+  assert.deepEqual(backend.requests.at(-1)?.body, {
+    message: 'Что дальше по плану?', context: nextQuestion.context, planExperience: true, guidedPlan: true, selectedEventIds: [],
+  });
+  await telegram.click('Добавить в план');
+  await telegram.message('/start');
+  await telegram.message('Что есть завтра?');
+  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Что есть завтра?', planExperience: true, guidedPlan: true });
+});
+
+test('Telegram guides a day plan with the actual discovery API and skips overlapping events', async () => {
+  const clock = () => fixedDate;
+  const catalog = openCatalog(':memory:', clock);
+  const source = { sourceType: 'import', sourceUrl: 'https://example.com/events', sourceName: 'Тест', raw: null, city: 'Уфа',
+    status: 'published' } as const;
+  catalog.importEvents([
+    { ...source, title: 'Утренний спектакль', category: 'theatre', venue: 'Театр', sourceKey: 'theatre',
+      startsAt: '2026-11-14T10:00:00+05:00', endsAt: '2026-11-14T12:00:00+05:00' },
+    { ...source, title: 'Ранняя выставка', category: 'exhibition', venue: 'Музей', sourceKey: 'early',
+      startsAt: '2026-11-14T11:00:00+05:00' },
+    { ...source, title: 'Выставка после обеда', category: 'exhibition', venue: 'Музей', sourceKey: 'later',
+      startsAt: '2026-11-14T13:00:00+05:00' },
+  ]);
+  const server = await buildServer(catalog, { clock, disableModel: true });
+  const service = createBotService('http://api.test', 'test-token', async (input, options) => {
+    const request = new Request(input, options);
+    const response = await server.inject({ method: 'POST', url: new URL(request.url).pathname,
+      headers: { 'content-type': 'application/json' }, payload: await request.text() });
+    return new Response(response.body, { status: response.statusCode });
+  });
+
+  try {
+    const telegram = harness({ service });
+    await telegram.message('Подбери два события в Уфе завтра, поедем на машине');
+    assert.match(telegram.latest().text, /С чего хотите начать/u);
+    assert.doesNotMatch(telegram.latest().text, /Утренний спектакль/u);
+    await telegram.click('Спектакли');
+    assert.match(telegram.latest().text, /Утренний спектакль.*10:00.*12:00/u);
+    await telegram.click('Добавить в план');
+    assert.match(telegram.latest().text, /освободитесь в 12:00/u);
+    assert.doesNotMatch(telegram.latest().text, /Выставка после обеда/u);
+    await telegram.click('Выставки');
+    assert.match(telegram.latest().text, /Выставка после обеда.*13:00/u);
+    assert.doesNotMatch(telegram.latest().text, /Ранняя выставка/u);
+  } finally {
+    await server.close();
+    catalog.close();
+  }
 });
 
 test('reports backend failures and keeps context for a retry', async () => {
@@ -317,5 +409,5 @@ test('reports backend failures and keeps context for a retry', async () => {
   assert.match(telegram.latest().text, /временно недоступна/);
   assert.equal(telegram.errors(), 1);
   await telegram.message('В выходные');
-  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'В выходные', context: { city: 'Уфа' }, planExperience: true });
+  assert.deepEqual(backend.requests.at(-1)?.body, { message: 'В выходные', context: { city: 'Уфа' }, planExperience: true, guidedPlan: true });
 });
