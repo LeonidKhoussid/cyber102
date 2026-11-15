@@ -99,7 +99,7 @@ function dateFilters(context: DiscoveryContext, now: Date): Pick<EventFilters, '
   };
 }
 
-function constraints(context: DiscoveryContext) {
+export function constraints(context: DiscoveryContext) {
   const labels: DiscoveryResponse['constraints'] = [];
   function show(label: string, value: string | undefined) {
     if (value) labels.push({ label, value });
@@ -133,7 +133,7 @@ function totalCost(event: CatalogEvent, context: DiscoveryContext): number | und
   return event.priceMin === undefined ? undefined : event.priceMin * (context.partySize ?? 1);
 }
 
-function checkEvent(event: CatalogEvent, context: DiscoveryContext): Rejection[] {
+export function checkEvent(event: CatalogEvent, context: DiscoveryContext): Rejection[] {
   const reasons: Rejection[] = [];
   if (context.language && !normalizeText(event.language ?? '').split(' ').some(language =>
     context.language === 'ba' ? /^(?:ba$|bak$|башкирск|башкорт)/u.test(language) : /^(?:ru$|rus$|русск)/u.test(language))) {
@@ -161,7 +161,7 @@ function checkEvent(event: CatalogEvent, context: DiscoveryContext): Rejection[]
   return reasons;
 }
 
-function explain(event: CatalogEvent, context: DiscoveryContext, now: Date, travel?: number): string[] {
+export function explain(event: CatalogEvent, context: DiscoveryContext, now: Date, travel?: number): string[] {
   const start = new Date(event.startsAt);
   const end = event.endsAt && new Date(event.endsAt);
   const reasons = [end && localDate(start) !== localDate(end) && start < now

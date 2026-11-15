@@ -7,8 +7,9 @@ import { registerChats } from './chats.ts';
 import { registerTelegramLogin, telegramLoginConfigured } from './telegram-login.ts';
 import { registerApi } from './api.ts';
 import { createDiscovery } from './discover.ts';
+import { createConversationalDiscovery } from './conversation.ts';
 import { osrmEstimator } from './routing.ts';
-import { modelInterpreter, modelRecommender } from './model.ts';
+import { modelConversation } from './model.ts';
 import { transcriber } from './transcription.ts';
 
 export async function buildServer(catalog: CatalogStore, options: {
@@ -70,11 +71,14 @@ export async function buildServer(catalog: CatalogStore, options: {
     averageResponseMs: requestCount ? Number((elapsedMilliseconds / requestCount).toFixed(2)) : 0,
   }));
 
-  const discover = createDiscovery(catalog, {
+  const conversation = options.disableModel ? undefined : modelConversation(process.env);
+  const discover = conversation ? createConversationalDiscovery(catalog, {
+    clock: options.clock,
+    model: conversation,
+    onTurn: stats => server.log[stats.outcome === 'ok' ? 'info' : 'warn'](stats, 'AI conversation turn'),
+  }) : createDiscovery(catalog, {
     clock: options.clock,
     travel: options.routingOrigin ? osrmEstimator(options.routingOrigin) : undefined,
-    interpret: options.disableModel ? undefined : modelInterpreter(process.env),
-    recommend: options.disableModel ? undefined : modelRecommender(process.env),
     onInterpretFailure: () => server.log.warn('Model unavailable, using local search'),
   });
   registerApi(server, catalog, { adminToken: options.adminToken, botToken: options.botToken, clock: options.clock,

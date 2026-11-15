@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import type { InlineKeyboardButton, Update } from 'grammy/types';
-import { createTelegramBot } from '../src/bot.ts';
-import type { CatalogEvent, DiscoveryResponse } from '@afisha/contracts';
+import type { InlineKeyboardButton, MenuButton, Update } from 'grammy/types';
+import { configureMiniApp, createTelegramBot } from '../src/bot.ts';
+import type { CatalogEvent, DiscoveryContext, DiscoveryResponse } from '@afisha/contracts';
 import { createBotService } from '../src/client.ts';
 import { openCatalog } from '../../api/src/catalog.ts';
 import { buildServer } from '../../api/src/server.ts';
@@ -87,7 +87,7 @@ function harness({ service }: Pick<ReturnType<typeof api>, 'service'>, siteUrl?:
   let time = fixedDate.valueOf();
   let errors = 0;
   const bot = createTelegramBot({ token: 'offline', service, siteUrl, clock: () => new Date(time), onError: () => { errors++; } });
-  type RecordedPayload = { text?: string; reply_markup?: { inline_keyboard: InlineKeyboardButton[][] } };
+  type RecordedPayload = { text?: string; reply_markup?: { inline_keyboard: InlineKeyboardButton[][] }; menu_button?: MenuButton };
   const calls: { method: string; payload: RecordedPayload }[] = [];
   bot.botInfo = botUser;
   bot.api.config.use(async (_previous, method, payload) => {
@@ -124,9 +124,34 @@ function harness({ service }: Pick<ReturnType<typeof api>, 'service'>, siteUrl?:
     } };
     await bot.handleUpdate(update);
   }
-  return { calls, message, latest, data, callback, errors: () => errors, click: (label: string | RegExp) => callback(data(label)),
+  return { bot, calls, message, latest, data, callback, errors: () => errors, click: (label: string | RegExp) => callback(data(label)),
     advance: (milliseconds: number) => { time += milliseconds; } };
 }
+
+test('opens the public site as a Mini App from the default menu and private start message', async () => {
+  const telegram = harness(api(), 'https://afisha.example');
+  await configureMiniApp(telegram.bot, 'https://afisha.example');
+  assert.deepEqual(telegram.calls.at(-1), {
+    method: 'setChatMenuButton',
+    payload: { menu_button: { type: 'web_app', text: 'Открыть Афишу', web_app: { url: 'https://afisha.example/' } } },
+  });
+  await telegram.message('/start');
+  const launch = telegram.latest().buttons.find(button => button.text === 'Открыть Афишу');
+  assert.deepEqual(launch, { text: 'Открыть Афишу', web_app: { url: 'https://afisha.example/' } });
+  const calls = telegram.calls.length;
+  await telegram.message('/start', 1, true);
+  assert.equal(telegram.calls.length, calls);
+});
+
+test('does not offer a Mini App without a valid public HTTPS URL', async () => {
+  for (const siteUrl of [undefined, 'http://localhost:3000', 'not-a-url', 'https://user:password@example.com']) {
+    const telegram = harness(api(), siteUrl);
+    await configureMiniApp(telegram.bot, siteUrl);
+    assert.equal(telegram.calls.length, 0);
+    await telegram.message('/start');
+    assert.ok(!telegram.latest().buttons.some(button => 'web_app' in button));
+  }
+});
 
 test('browses results with shared filters, pagination and source links', async () => {
   const concerts = Array.from({ length: 6 }, (_, index) => event(
@@ -211,8 +236,25 @@ test('handles each relative period and exact dates in Bashkortostan time', async
   telegram.advance(10_000);
   await telegram.message('/cancel');
   assert.match(telegram.latest().text, /Следующая неделя/);
+  await telegram.click('Даты');
+  await telegram.click('Точная дата');
   await telegram.message('2026-11-23');
   assert.match(telegram.latest().text, /Событий: 1.*\n.*\n.*Через неделю/);
+});
+
+test('plain dates and arbitrary conversational replies always reach AI discovery outside the explicit date form', async () => {
+  const backend = api();
+  backend.discover(() => ({ status: 'clarify', message: 'С кем планируете пойти?',
+    context: { memory: 'Пользователь выбирает отдых', conversation: [{ role: 'assistant', content: 'С кем планируете пойти?' }] },
+    events: [], constraints: [], suggestions: [] }));
+  const telegram = harness(backend);
+  await telegram.message('/start');
+  await telegram.message('2026-11-23');
+  assert.equal((backend.requests.at(-1)?.body as { message: string }).message, '2026-11-23');
+  await telegram.message('Я, моя половинка и наш маленький любитель динозавров');
+  const body = backend.requests.at(-1)?.body as { message: string; context: DiscoveryContext };
+  assert.equal(body.message, 'Я, моя половинка и наш маленький любитель динозавров');
+  assert.equal(body.context.conversation?.at(-1)?.content, 'С кем планируете пойти?');
 });
 
 test('uses the authenticated backend to store subscriptions and scopes removal to the private chat', async () => {
@@ -356,6 +398,26 @@ test('accepts the active day-plan offer, advances the shared conversation, and r
   assert.deepEqual(backend.requests.at(-1)?.body, { message: 'Что есть завтра?', planExperience: true, guidedPlan: true });
 });
 
+test('Telegram presents several plan choices and saves only the option the user chooses', async () => {
+  const choices = Array.from({ length: 3 }, (_, index) => event(`Вариант ${index + 1}`, '2026-11-14T12:00:00+05:00'));
+  const backend = api(choices);
+  let calls = 0;
+  backend.discover(() => ++calls === 1 ? {
+    status: 'matches', message: 'Вот три спектакля. Выберите один.', suggestions: [], constraints: [],
+    context: { city: 'Уфа', date: '2026-11-14', planMode: 'day', planCount: 2,
+      planStep: { phase: 'offer', eventId: choices[0].id, eventIds: choices.map(item => item.id) } },
+    events: choices.map(item => ({ event: item, reasons: [] })),
+  } : { status: 'clarify', message: 'Что хочется после выбранного спектакля?', suggestions: [], constraints: [],
+    context: { city: 'Уфа', date: '2026-11-14', planMode: 'day' }, events: [] });
+  const telegram = harness(backend);
+  await telegram.message('Посоветуй спектакли для плана дня');
+  assert.deepEqual(telegram.latest().buttons.filter(button => /^Выбрать /u.test(button.text)).map(button => button.text),
+    ['Выбрать 1', 'Выбрать 2', 'Выбрать 3']);
+  await telegram.click('Выбрать 2');
+  assert.deepEqual((backend.requests.at(-1)?.body as { selectedEventIds: string[] }).selectedEventIds, [choices[1].id]);
+  assert.equal(calls, 2);
+});
+
 test('Telegram guides a day plan with the actual discovery API and skips overlapping events', async () => {
   const clock = () => fixedDate;
   const catalog = openCatalog(':memory:', clock);
@@ -394,6 +456,23 @@ test('Telegram guides a day plan with the actual discovery API and skips overlap
     await server.close();
     catalog.close();
   }
+});
+
+test('Telegram keeps the detailed nearby-miss explanation and a selectable exhibition alternative', async () => {
+  const exhibition = event('Фотовыставка', '2026-11-14T12:00:00+05:00', { category: 'exhibition' });
+  const backend = api([exhibition]);
+  const explanation = 'Рядом с выбранным кинотеатром выставку подтвердить не удалось. '
+    + 'Я проверил остальные условия выбранного дня и доступные сведения о площадках. '.repeat(10)
+    + 'Есть фотовыставка в другом месте, но расстояние до кинотеатра не проверено.';
+  backend.discover(() => ({ status: 'clarify', message: explanation, constraints: [], suggestions: [], events: [],
+    alternatives: [{ event: exhibition, reasons: ['Расстояние до кинотеатра не удалось проверить.'] }], alternativeReason: 'proximity',
+    context: { city: 'Уфа', date: '2026-11-14', planMode: 'day', planStep: { phase: 'offer', eventId: exhibition.id } } }));
+  const telegram = harness(backend);
+  await telegram.message('Выставку рядом с кинотеатром');
+  assert.match(telegram.latest().text, /другом месте, но расстояние до кинотеатра не проверено/);
+  assert.match(telegram.latest().text, /Фотовыставка/);
+  assert.ok(telegram.latest().buttons.some(button => button.text === 'Добавить в план'));
+  assert.ok(telegram.latest().text.length <= 4000);
 });
 
 test('reports backend failures and keeps context for a retry', async () => {

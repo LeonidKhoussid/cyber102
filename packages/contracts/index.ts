@@ -29,12 +29,18 @@ export const dayPlanLimit = 4;
 export type PlanTransport = 'car' | 'transit' | 'walk' | 'bike' | 'taxi';
 
 export type DiscoveryContext = {
+  conversation?: { role: 'user' | 'assistant'; content: string }[];
+  memory?: string;
+  interestsKnown?: boolean;
+  nearEventId?: string;
+  nearbyKm?: number;
+  lastEventIds?: string[];
   city?: string; category?: Category; date?: string; period?: 'today' | 'tomorrow' | 'weekend' | 'week';
   fromDate?: string; untilDate?: string; venue?: string; language?: 'ba' | 'ru'; sortByDistance?: boolean;
   latestEnd?: string; earliestStart?: string; childAge?: number; child?: boolean; partySize?: number;
   preference?: string; awaitingPreference?: boolean;
   planMode?: 'single' | 'day'; planCount?: number; transport?: PlanTransport;
-  planStep?: { anchor?: string; phase: 'question' | 'offer'; eventId?: string; resumeAfter?: string; position?: 'before' | 'after' };
+  planStep?: { anchor?: string; phase: 'question' | 'offer'; eventId?: string; eventIds?: string[]; resumeAfter?: string; position?: 'before' | 'after' };
   budget?: number; travelMinutes?: number; origin?: string; free?: boolean; cheaperThan?: number; referencePrice?: number; seenEventIds?: string[]; query?: string;
 };
 
@@ -44,6 +50,7 @@ export type DiscoveryResponse = {
   constraints: { label: string; value: string }[];
   events: { event: CatalogEvent; reasons: string[] }[];
   alternatives?: DiscoveryResponse['events'];
+  alternativeReason?: 'proximity' | 'travel';
   suggestions: string[];
   context: DiscoveryContext;
 };

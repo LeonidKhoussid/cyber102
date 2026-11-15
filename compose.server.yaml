@@ -1,0 +1,20 @@
+services:
+  db:
+    ports: !reset []
+    restart: unless-stopped
+  api:
+    ports: !reset []
+    restart: unless-stopped
+  web:
+    ports: !reset []
+    restart: unless-stopped
+    networks:
+      default: {}
+      proxy:
+        aliases: [afishabash-web]
+  bot:
+    restart: unless-stopped
+networks:
+  proxy:
+    external: true
+    name: web-proxy

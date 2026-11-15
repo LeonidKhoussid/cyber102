@@ -79,6 +79,8 @@ export function cleanContext(input: unknown): DiscoveryContext {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
   const values = input as Record<string, unknown>;
   const result: DiscoveryContext = {};
+  if (typeof values.nearEventId === 'string' && /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(values.nearEventId)) result.nearEventId = values.nearEventId;
+  if (typeof values.nearbyKm === 'number' && Number.isFinite(values.nearbyKm) && values.nearbyKm >= 0 && values.nearbyKm <= 100) result.nearbyKm = values.nearbyKm;
   for (const field of ['city', 'venue', 'origin', 'query', 'preference'] as const) {
     const value = values[field];
     if (typeof value === 'string' && value.trim() && value.length <= 120) result[field] = value.trim();
@@ -103,6 +105,7 @@ export function cleanContext(input: unknown): DiscoveryContext {
     result.planStep = { phase: step.phase, anchor: optionalId(step.anchor), eventId: optionalId(step.eventId),
       position: step.position === 'before' || step.position === 'after' ? step.position : undefined,
       resumeAfter: typeof step.resumeAfter === 'string' && validTime.test(step.resumeAfter) ? step.resumeAfter : undefined };
+    if (Array.isArray(step.eventIds)) result.planStep.eventIds = [...new Set(step.eventIds.map(optionalId).filter((id): id is string => Boolean(id)))].slice(0, 5);
   }
   if (values.transport === 'car' || values.transport === 'transit' || values.transport === 'walk' ||
       values.transport === 'bike' || values.transport === 'taxi') result.transport = values.transport;
@@ -117,7 +120,7 @@ export function cleanContext(input: unknown): DiscoveryContext {
     const value = values[field];
     if (typeof value === 'number' && (field === 'budget' || field === 'referencePrice' || field === 'cheaperThan' ? Number.isFinite(value) : Number.isInteger(value)) && value >= minimum && value <= maximum) result[field] = value;
   }
-  for (const field of ['child', 'free', 'sortByDistance', 'awaitingPreference'] as const) {
+  for (const field of ['child', 'free', 'sortByDistance', 'awaitingPreference', 'interestsKnown'] as const) {
     if (typeof values[field] === 'boolean') result[field] = values[field];
   }
   if (Array.isArray(values.seenEventIds)) {

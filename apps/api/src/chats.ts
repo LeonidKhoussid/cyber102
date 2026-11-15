@@ -172,12 +172,16 @@ export function registerChats(server: FastifyInstance, pool: Pool, options: {
         `, [id, requestId]);
         if (duplicate) return duplicate.message === message ? { chat: publicChat(chat), turn: publicTurn(duplicate) } : 'conflict';
 
-        const { rows: [prior] } = await client.query<{ context: DiscoveryResponse['context'] }>(`
-          SELECT response->'context' AS context FROM account_chat_turns
-          WHERE chat_id = $1 ORDER BY position DESC LIMIT 1
+        const { rows: recent } = await client.query<{ message: string; reply: string; context: DiscoveryResponse['context'] }>(`
+          SELECT message, response->>'message' AS reply, response->'context' AS context FROM account_chat_turns
+          WHERE chat_id = $1 ORDER BY position DESC LIMIT 6
         `, [id]);
+        const prior = recent[0]?.context;
+        const conversation: NonNullable<DiscoveryResponse['context']['conversation']> = recent.toReversed().flatMap(turn => [
+          { role: 'user' as const, content: turn.message }, { role: 'assistant' as const, content: turn.reply },
+        ]);
         const guidedPlan = request.body?.guidedPlan === true;
-        const response = await options.discover(message, prior?.context, { planExperience: request.body?.planExperience === true, guidedPlan,
+        const response = await options.discover(message, prior ? { ...prior, conversation } : undefined, { planExperience: request.body?.planExperience === true, guidedPlan,
           selectedEventIds: guidedPlan ? await selectedEventIds(client, id) : undefined });
         const { rows: [turn] } = await client.query<TurnRow>(`
           INSERT INTO account_chat_turns (chat_id, request_id, message, response)

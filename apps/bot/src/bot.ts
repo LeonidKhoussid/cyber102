@@ -53,6 +53,14 @@ function publicUrl(value?: string): string | undefined {
   if (url?.protocol === 'https:' && !url.username && !url.password) return url.href;
 }
 
+export async function configureMiniApp(bot: Pick<Bot, 'api'>, siteUrl?: string) {
+  const site = publicUrl(siteUrl);
+  if (!site) return;
+  await bot.api.setChatMenuButton({
+    menu_button: { type: 'web_app', text: 'Открыть Афишу', web_app: { url: site } },
+  });
+}
+
 function isLocalDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const day = new Date(`${value}T00:00:00Z`);
@@ -263,24 +271,29 @@ export function createTelegramBot({ token, service, siteUrl, onError, clock = ()
 
   async function showDiscovery(context: Context, session: Session, result: DiscoveryResponse) {
     const screen = menu(session);
-    const lines = [shorten(result.message, 800)];
+    const lines = [shorten(result.message, 1200)];
     const constraints = result.constraints.map(({ label, value }) => `${label}: ${value}`).join(' · ');
     if (constraints) lines.push(shorten(constraints, 400));
-    const cards = result.events.length ? result.events : result.alternatives ?? [];
+    const cards = [...result.events, ...result.alternatives ?? []];
     const { city, date, planMode, planStep } = result.context;
     const plan = session.dayPlan;
-    for (const { event, reasons } of cards.slice(0, pageSize)) {
+    for (const [index, { event, reasons }] of cards.slice(0, pageSize).entries()) {
       screen.button(event.title, next => showDetails(next, session, event.id, back => showDiscovery(back, session, result)));
       screen.keyboard.row();
-      const summary = `${shorten(event.title, 120)} — ${dateFormatter.format(new Date(event.startsAt))}, ${shorten(event.city, 80)}`;
+      const summary = `${index + 1}. ${shorten(event.title, 120)} — ${dateFormatter.format(new Date(event.startsAt))}, ${shorten(event.city, 80)}`;
       lines.push([summary, shorten(reasons.join(' · '), 320)].filter(Boolean).join('\n'));
-      if (planMode === 'day' && planStep?.phase === 'offer' && planStep.eventId === event.id && event.status === 'published' && city === event.city && date) {
-        if (plan && plan.eventIds.length > 0 && (plan.city !== city || plan.date !== date)) {
+      const offeredIds = planStep?.eventIds ?? (planStep?.eventId ? [planStep.eventId] : []);
+      const offerDate = date ?? localDate.format(new Date(event.startsAt));
+      if (planMode === 'day' && planStep?.phase === 'offer' && offeredIds.includes(event.id) && event.status === 'published' && city === event.city) {
+        if (plan && plan.eventIds.length > 0 && (plan.city !== city || plan.date !== offerDate)) {
           lines.push('В плане уже есть события другого дня или города. Чтобы начать заново, отправьте /start.');
         } else if (!plan?.eventIds.includes(event.id) && (plan?.eventIds.length ?? 0) < dayPlanLimit) {
-          screen.button('Добавить в план', next => discover(next, session, nextPlanStep, { city, date, eventIds: [...(plan?.eventIds ?? []), event.id] }));
+          screen.button(cards.length > 1 ? `Выбрать ${index + 1}` : 'Добавить в план', next => discover(next, session, nextPlanStep, { city, date: offerDate, eventIds: [...(plan?.eventIds ?? []), event.id] }));
           screen.keyboard.row();
         }
+      } else if (planMode !== 'day') {
+        screen.button(`Выбрать ${index + 1}`, next => discover(next, session, `Выбираю «${event.title}». Расскажи подробнее.`));
+        screen.keyboard.row();
       }
     }
     for (const suggestion of result.suggestions.slice(0, planMode === 'day' ? 7 : 3)) {
@@ -292,7 +305,7 @@ export function createTelegramBot({ token, service, siteUrl, onError, clock = ()
       screen.keyboard.row();
     }
     screen.button('Открыть каталог', next => showResults(next, session));
-    await screen.send(context, lines.join('\n\n'));
+    await screen.send(context, shorten(lines.join('\n\n'), 4000));
   }
 
   async function discover(context: Context, session: Session, text: string, plan = session.dayPlan) {
@@ -300,7 +313,14 @@ export function createTelegramBot({ token, service, siteUrl, onError, clock = ()
       await context.reply('Опишите событие в сообщении до 1200 символов.');
       return;
     }
-    const result = await service.discover(text, session.discovery, plan?.eventIds);
+    await context.replyWithChatAction('typing').catch(() => {});
+    const typing = setInterval(() => { void context.replyWithChatAction('typing').catch(() => {}); }, 4000);
+    let result: DiscoveryResponse;
+    try {
+      result = await service.discover(text, session.discovery, plan?.eventIds);
+    } finally {
+      clearInterval(typing);
+    }
     session.discovery = result.context;
     session.dayPlan = plan?.eventIds.length ? plan : undefined;
     await showDiscovery(context, session, result);
@@ -357,8 +377,8 @@ export function createTelegramBot({ token, service, siteUrl, onError, clock = ()
     screen.button('Найти события', next => showResults(next, session));
     screen.keyboard.row();
     addFilters(screen, session);
-    if (site) screen.keyboard.url('Открыть сайт', site);
-    await screen.send(context, 'Афиша Башкортостана. Выберите фильтры или напишите, какое событие ищете.');
+    if (site) screen.keyboard.row().webApp('Открыть Афишу', site);
+    await screen.send(context, 'Афиша Башкортостана. Расскажите своими словами, как хотите провести время: с кем, где или какое настроение. Я подберу события и уточню то, что поможет с выбором.');
   });
 
   bot.command('help', context => context.reply(help));
@@ -390,12 +410,11 @@ export function createTelegramBot({ token, service, siteUrl, onError, clock = ()
       await context.reply('Неизвестная команда. Отправьте /help.');
       return;
     }
-    const dateLike = /^\d{4}-\d{1,2}-\d{1,2}$/.test(text);
-    if ((session.enteringDate || dateLike) && !isLocalDate(text)) {
+    if (session.enteringDate && !isLocalDate(text)) {
       await context.reply('Проверьте дату и отправьте её в формате ГГГГ-ММ-ДД.');
       return;
     }
-    if (session.enteringDate || (dateLike && !session.discovery)) {
+    if (session.enteringDate) {
       session.filters.period = undefined;
       await setFilter(context, session, 'date', text);
       return;

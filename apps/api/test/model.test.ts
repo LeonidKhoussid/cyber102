@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { CatalogEvent } from '@afisha/contracts';
-import { modelInterpreter, modelRecommender } from '../src/model.ts';
+import { modelConversation, modelInterpreter, modelRecommender } from '../src/model.ts';
 
 test('uses the Timeweb key, model and endpoint with structured output', async () => {
   const originalFetch = globalThis.fetch;
@@ -21,6 +21,21 @@ test('uses the Timeweb key, model and endpoint with structured output', async ()
   } finally {
     globalThis.fetch = originalFetch;
   }
+});
+
+test('Qwen 3.8 Flash uses its gateway model ID and non-thinking JSON mode for chat latency', async context => {
+  context.mock.method(globalThis, 'fetch', async (input: string, init?: RequestInit) => {
+    assert.equal(String(input), 'https://api.timeweb.ai/v1/chat/completions');
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.model, 'dashscope/qwen3.8-flash');
+    assert.equal(body.enable_thinking, false);
+    assert.equal(body.reasoning_effort, undefined);
+    assert.deepEqual(body.response_format, { type: 'json_object' });
+    return Response.json({ choices: [{ message: { content: '{"action":"respond","arguments":{"message":"Что вам интересно?"}}' } }] });
+  });
+  const conversation = modelConversation({ TIMEWEB_API_KEY: 'test-key', DISCOVERY_MODEL: 'dashscope/qwen3.8-flash' });
+  assert.ok(conversation);
+  assert.equal((await conversation({ message: 'Хочу куда-нибудь сходить' }) as { action: string }).action, 'respond');
 });
 
 test('ranks candidate IDs and sends only relevant evidence to the configured provider', async (context) => {

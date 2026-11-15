@@ -131,11 +131,12 @@ function Answer({ answer, selectSuggestion, active, cardAction, planLink, busy }
   answer: DiscoveryResponse; selectSuggestion: (suggestion: string) => void; active: boolean;
   cardAction: (event: CatalogEvent, context: DiscoveryContext) => ReactNode; planLink?: ReactNode; busy: boolean;
 }) {
-  const cards = answer.events.length ? answer.events : answer.alternatives ?? [];
+  const cards = [...answer.events, ...answer.alternatives ?? []];
   const hasAlternatives = Boolean(answer.alternatives?.length);
   return <>
     <h2 className="answer-label"><span className="answer-mark"><Icon name="mark" /></span>
-      <span>{answer.status === 'matches' ? (answer.context.planStep?.phase === 'offer' ? 'Предложение для плана' : 'Подборка событий')
+      <span>{hasAlternatives && !answer.events.length ? (answer.alternativeReason === 'proximity' ? 'Другие варианты' : 'Варианты без проверки дороги')
+        : answer.status === 'matches' ? (answer.context.planStep?.phase === 'offer' ? (cards.length > 1 ? 'Варианты для плана' : 'Предложение для плана') : 'Подборка событий')
         : hasAlternatives ? 'Варианты без проверки дороги' : answer.status === 'clarify' ? 'Нужно уточнение' : 'События не найдены'}</span>
     </h2>
     <p className="answer-message">{answer.message}</p>
@@ -414,7 +415,10 @@ export function Discovery() {
   async function send(message: string, retry = false, updatedPlan?: CatalogEvent[]) {
     const cleaned = message.trim();
     if (!cleaned || controller.current || planWrite.current || voiceBusy || chatLoading || chatError || checkingSession || signingOut) return;
-    const context = turns.findLast(turn => turn.answer)?.answer?.context;
+    const previousContext = turns.findLast(turn => turn.answer)?.answer?.context;
+    const context = { ...previousContext, conversation: turns.filter(turn => turn.answer).slice(-6).flatMap(turn => [
+      { role: 'user' as const, content: turn.message }, { role: 'assistant' as const, content: turn.answer!.message },
+    ]) };
     const selectedEventIds = (updatedPlan ?? plan.events).map(event => event.id);
     const active = new AbortController();
     controller.current = active;
@@ -502,9 +506,8 @@ export function Discovery() {
     (latestContext?.city && locationKey(latestContext.city) !== locationKey(firstSaved.city)) ||
     (latestContext?.date && latestContext.date !== eventLocalDay(firstSaved))));
   const canEditRoute = !differentPlan && latestContext?.planMode === 'day';
-  const offeredId = latestContext?.planStep?.phase === 'offer' ? latestContext.planStep.eventId : undefined;
-  const offeredContext = offeredId ? turns.findLast(({ answer }) => answer &&
-    (answer.events.length ? answer.events : answer.alternatives ?? []).some(({ event }) => event.id === offeredId))?.answer?.context : undefined;
+  const offeredIds = latestContext?.planStep?.phase === 'offer'
+    ? latestContext.planStep.eventIds ?? (latestContext.planStep.eventId ? [latestContext.planStep.eventId] : []) : [];
 
   async function changePlan(event: CatalogEvent, date: string, remove: boolean, advance = false) {
     if (busy || planWrite.current || controller.current) return;
@@ -521,8 +524,12 @@ export function Discovery() {
 
   function cardPlanAction(event: CatalogEvent, context: DiscoveryContext) {
     const saved = plan.events.some(item => item.id === event.id);
-    if (!saved && (context.planMode !== 'day' || !context.date)) return;
-    const activeOffer = canEditRoute && latestContext?.date === context.date && offeredId === event.id && offeredContext === context;
+    if (!saved && context.planMode !== 'day') {
+      if (latestContext !== context) return;
+      return <button type="button" className="prompt-chip" disabled={busy}
+        onClick={() => void send(`Выбираю «${event.title}». Расскажи подробнее.`)}>Выбрать событие</button>;
+    }
+    const activeOffer = canEditRoute && latestContext === context && offeredIds.includes(event.id);
     if (!saved && (context.planStep || latestContext?.planStep) && !activeOffer) return;
     const date = context.date ?? eventLocalDay(event);
     const reason = saved ? undefined : planRejection(plan.events, event, date);

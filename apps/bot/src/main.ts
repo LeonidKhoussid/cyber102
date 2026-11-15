@@ -1,4 +1,4 @@
-import { createTelegramBot } from './bot.ts';
+import { configureMiniApp, createTelegramBot } from './bot.ts';
 import { createBotService } from './client.ts';
 
 const token = process.env.BOT_TOKEN?.trim();
@@ -22,7 +22,16 @@ if (!token || !apiToken) {
     process.once('SIGTERM', stop);
 
     try {
-      await bot.start({ allowed_updates: ['message', 'callback_query'] });
+      await bot.start({
+        allowed_updates: ['message', 'callback_query'],
+        onStart: async () => {
+          try {
+            await configureMiniApp(bot, process.env.PUBLIC_SITE_URL);
+          } catch {
+            console.warn('Telegram Mini App menu could not be configured.');
+          }
+        },
+      });
     } catch {
       if (!stopping) {
         console.error('Telegram polling stopped. Check BOT_TOKEN and connectivity.');
